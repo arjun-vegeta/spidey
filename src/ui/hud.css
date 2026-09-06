@@ -246,25 +246,38 @@ html, body {
 .ch-left { left: 0; top: 50%; width: 8px; height: 3px; transform: translateY(-50%); }
 .ch-right { right: 0; top: 50%; width: 8px; height: 3px; transform: translateY(-50%); }
 
-/* Web Anchor Reticle */
+/* Web Anchor Reticle: sits BELOW the crosshair so it never covers your aim.
+ * The crosshair dot itself turns green when a web will connect. */
 .web-anchor-reticle {
   position: absolute;
-  top: 50%;
+  top: calc(50% + 42px);
   left: 50%;
-  transform: translate(-50%, -50%);
+  transform: translate(-50%, 0);
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
   color: var(--ink-blue);
-  font-size: 16px;
+  font-size: 13px;
   font-weight: 700;
   opacity: 0;
-  transition: opacity 0.15s ease, transform 0.15s ease;
+  transition: opacity 0.15s ease;
+  white-space: nowrap;
 }
 
 .web-anchor-reticle.active {
   opacity: 1;
-  transform: translate(-50%, -50%) scale(1.1);
+}
+
+.crosshair-default .ch-dot {
+  transition: background 0.12s ease;
+}
+
+.crosshair-default.web-lock .ch-dot {
+  background: #27ae60;
+}
+
+.crosshair-default.web-lock .ch-tick {
+  background: #27ae60;
 }
 
 .reticle-core {

@@ -67,6 +67,10 @@ export class Player {
   public isCrouching: boolean = false;
   public isSprinting: boolean = false;
 
+  // Tap-vs-hold Space while swinging: tap slings, hold winches.
+  private winchWait: number = -1;
+  private readonly winchHoldTime: number = 0.18;
+
   // Scope breath: hold Shift to steady, 3s lungs
   private breathLeft: number = 3.0;
   private swayTime: number = 0;
@@ -122,6 +126,7 @@ export class Player {
     this.physics.playerHeight = this.physics.standHeight;
     this.isCrouching = false;
     this.isSprinting = false;
+    this.winchWait = -1;
     this.yaw = 0;
     this.pitch = 0;
     this.cameraRoll = 0;
@@ -324,13 +329,36 @@ export class Player {
         this.webShooter.cancelWebZip(forward);
         this.physics.jumpBufferTimer = 0;
       } else if (this.isSwinging) {
-        // Sling to the anchor: the web yanks you toward the point you shot
-        this.physics.slingTowardAnchor(forward);
-        this.webShooter.notifyReleased();
+        // Don't sling yet: tap = sling, hold = winch (decided below)
+        this.winchWait = 0;
         this.physics.jumpBufferTimer = 0;
       } else if (this.physics.isGrounded || this.physics.coyoteTimer > 0) {
         this.physics.jump();
         this.physics.jumpBufferTimer = 0;
+      }
+    }
+
+    // Tap-vs-hold Space while swinging. Tap yanks you to the anchor (sling);
+    // holding reels you all the way to the point (winch). Letting go mid-winch
+    // drops the line and keeps your momentum with a small hop.
+    if (this.winchWait >= 0 && this.isSwinging) {
+      this.winchWait += dt;
+      if (!this.input.isJumpHeld()) {
+        this.physics.slingTowardAnchor(forward);
+        this.webShooter.notifyReleased();
+        this.winchWait = -1;
+      } else if (this.winchWait >= this.winchHoldTime) {
+        this.physics.winching = true;
+        this.winchWait = -1;
+      }
+    } else if (this.winchWait >= 0) {
+      this.winchWait = -1;
+    }
+    if (this.physics.winching && (!this.input.isJumpHeld() || !this.isSwinging)) {
+      // Let go mid-winch: line goes dead, you keep momentum and fall.
+      this.physics.winching = false;
+      if (this.isSwinging) {
+        this.webShooter.releaseWeb(false);
       }
     }
 
@@ -378,6 +406,13 @@ export class Player {
 
     // World collision: ground raycast (floors/roofs) + capsule push-out (walls)
     this.resolveWorldCollisions(collidables);
+
+    // The line can end inside physics (winch arrival, slack timeout):
+    // sync the renderer/sound state when swinging stopped but nobody told the shooter.
+    if (!this.isSwinging && this.webShooter.isWebActive) {
+      this.webShooter.notifyReleased();
+    }
+    this.physics.winching = this.physics.winching && this.isSwinging;
 
     // Landing dip feel & soft/hard landing thuds
     if (!wasGrounded && this.physics.isGrounded) {

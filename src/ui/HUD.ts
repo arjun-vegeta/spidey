@@ -224,7 +224,7 @@ export class HUD {
           <label class="pause-row">VOLUME <input id="set-vol" type="range" min="0" max="1" step="0.05"><span id="set-vol-v"></span></label>
           <label class="pause-row">FOV <input id="set-fov" type="range" min="70" max="90" step="1"><span id="set-fov-v"></span></label>
           <label class="pause-row pause-check"><input id="set-map" type="checkbox"> MINIMAP (N)</label>
-          <div class="pause-keys">WASD walk · SHIFT sprint · C crouch · E web (tap) · SPACE sling · F zip · Q aim · R reload · M mute</div>
+          <div class="pause-keys">WASD walk · SHIFT sprint · C crouch · E web (tap) · SPACE tap sling / hold winch · F zip · Q aim · R reload · M mute</div>
         </div>
       </div>
     `;
@@ -604,14 +604,16 @@ export class HUD {
       }
     });
 
-    // 5. Web Target Reticle
-    if (webTarget && webTarget.isValid) {
+    // 5. Web Target Reticle (offset below crosshair; dot turns green on lock)
+    const hasWebTarget = !!(webTarget && webTarget.isValid);
+    if (hasWebTarget) {
       this.webReticleElement.classList.add('active');
       const distEl = this.webReticleElement.querySelector('.reticle-dist') as HTMLElement;
-      if (distEl) distEl.textContent = `${Math.round(webTarget.distance)}m`;
+      if (distEl) distEl.textContent = `${Math.round((webTarget as WebTargetInfo).distance)}m`;
     } else {
       this.webReticleElement.classList.remove('active');
     }
+    this.centerCrosshairElement.classList.toggle('web-lock', hasWebTarget);
 
     // 6. Sniper Scope & Dynamic Crosshair Spread Ring
     const isSniperScoped = activeWep.type === 'sniper' && (activeWep as Sniper).isScoped;

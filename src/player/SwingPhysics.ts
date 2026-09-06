@@ -83,6 +83,12 @@ export class SwingPhysics {
   // Hard-landing control damp timer (0.25s control damp after landing > 25 m/s)
   public controlDampTimer: number = 0;
 
+  // Winch mode: holding Space while swinging reels you to the anchor.
+  // Set per-frame by Player; cleared on release/arrival/landing.
+  public winching: boolean = false;
+  public winchSpeed: number = 26.0;
+  public winchArriveDist: number = 3.0;
+
   // Web zip state
   public zipTarget: THREE.Vector3 | null = null;
   public zipSpeed: number = 62.0; // Rapid zip pull speed
@@ -142,6 +148,7 @@ export class SwingPhysics {
     this.mode = MovementMode.SWINGING;
     this.swingTime = 0;
     this.slackTimer = 0;
+    this.winching = false;
     this.isWebTaut = true;
 
     // Slight momentum redirect toward swing tangent to ensure immediate smooth arc
@@ -161,6 +168,7 @@ export class SwingPhysics {
 
     this.mode = MovementMode.AIR;
     this.slackTimer = 0;
+    this.winching = false;
     const releasedVel = this.velocity.clone();
 
     // If released on upward swing with jump button, apply slingshot impulse
@@ -210,6 +218,7 @@ export class SwingPhysics {
     this.webAnchorNormal = null;
     this.isWebTaut = false;
     this.slackTimer = 0;
+    this.winching = false;
   }
 
   /**
@@ -320,6 +329,27 @@ export class SwingPhysics {
   ): void {
     if (!this.webAnchor) return;
     this.swingTime += dt;
+
+    // 0. Winch: powered pull straight to the anchor, ignoring the pendulum.
+    // Arrival pops the line with a small upward vault.
+    if (this.winching) {
+      const toAnchor = this._tempVecA.subVectors(this.webAnchor, this.position);
+      const dist = toAnchor.length();
+      if (dist < this.winchArriveDist) {
+        this.mode = MovementMode.AIR;
+        this.webAnchor = null;
+        this.webAnchorNormal = null;
+        this.isWebTaut = false;
+        this.slackTimer = 0;
+        this.winching = false;
+        this.velocity.y = Math.max(this.velocity.y, 3.0);
+        return;
+      }
+      toAnchor.normalize();
+      const speed = Math.max(this.velocity.length(), this.winchSpeed);
+      this.velocity.copy(toAnchor).multiplyScalar(speed);
+      return;
+    }
 
     // 1. Reel in / let out rope
     if (isReelingIn && this.ropeLength > this.minRopeLength) {
@@ -576,6 +606,7 @@ export class SwingPhysics {
     this.jumpBufferTimer = 0;
     this.wallRunTimer = 0;
     this.slackTimer = 0;
+    this.winching = false;
     this.controlDampTimer = 0;
   }
 

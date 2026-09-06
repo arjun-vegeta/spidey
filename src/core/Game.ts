@@ -437,7 +437,7 @@ export class Game {
         }
         break;
       case 2:
-        this.hud.showHint('SPACE: SLING THERE · E: GRAB ELSEWHERE');
+        this.hud.showHint('TAP SPACE SLING · HOLD SPACE WINCH · E RE-GRAB');
         if (this.obSwung && !this.player.isSwinging) this.obStage = 3;
         break;
       default:

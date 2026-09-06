@@ -283,6 +283,29 @@ describe('SwingPhysics - Realistic Pendulum Web Mechanics', () => {
     expect(crouchSpeed).toBeLessThanOrEqual(2.4);
   });
 
+  it('winching reels straight to the anchor and pops the line on arrival', () => {
+    const anchor = new THREE.Vector3(0, 40, 0);
+    physics.position.set(0, 20, 0);
+    physics.velocity.set(5, 0, 0);
+    physics.attachWeb(anchor);
+    expect(physics.mode).toBe(MovementMode.SWINGING);
+
+    physics.winching = true;
+    physics.update(0.05, new THREE.Vector3(), new THREE.Vector3(0, 0, -1), false, false);
+    expect(physics.mode).toBe(MovementMode.SWINGING);
+    expect(physics.velocity.y).toBeGreaterThan(20);
+    expect(Math.abs(physics.velocity.x)).toBeLessThan(1);
+
+    // Near the anchor: arrival releases the line with an upward vault
+    physics.position.set(0, 39, 0);
+    physics.velocity.set(0, -5, 0);
+    physics.update(0.05, new THREE.Vector3(), new THREE.Vector3(0, 0, -1), false, false);
+    expect(physics.mode).toBe(MovementMode.AIR);
+    expect(physics.webAnchor).toBeNull();
+    expect(physics.winching).toBe(false);
+    expect(physics.velocity.y).toBeGreaterThanOrEqual(2.9);
+  });
+
   it('slings toward the anchor on Space while swinging', () => {
     const anchor = new THREE.Vector3(10, 30, 0);
     physics.position.set(0, 20, 0);

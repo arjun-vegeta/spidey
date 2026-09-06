@@ -8,7 +8,8 @@
  * - C: CROUCH / sit on ground (cover height) | Web reel-in while swinging.
  *   Standing back up needs headroom or you stay down.
  * - Ctrl / X: Web reel-out (swinging) | Dive assist (air: pitch assist + speed boost).
- * - Space: Jump (ground) | SLING to anchor (swinging: web yanks you to the shot point).
+ * - Space: Jump (ground) | TAP = sling to anchor (swinging) |
+ *   HOLD = winch all the way to the point, let go to fall (swinging).
  * - E / Right-Click (tap): Shoot web & STAY attached. Tap E again mid-swing to
  *   drop the line and grab a new anchor. Tap E with no target = dry thwip.
  * - F: Web zip to target anchor / ledge.
@@ -185,6 +186,7 @@ export class InputManager {
   public isMovingLeft(): boolean { return !!(this.keys['a'] || this.keys['arrowleft']); }
   public isMovingRight(): boolean { return !!(this.keys['d'] || this.keys['arrowright']); }
   public isJumping(): boolean { return !!this.keys[' ']; }
+  public isJumpHeld(): boolean { return !!this.keys[' ']; }
   public isSprintHeld(): boolean { return !!this.keys['shift']; }
   public isCrouchHeld(): boolean { return !!this.keys['c']; }
   public isReelingIn(): boolean { return !!(this.keys['shift'] || this.keys['c']); }
