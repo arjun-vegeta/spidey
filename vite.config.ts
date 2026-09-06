@@ -9,9 +9,13 @@ export default defineConfig({
   server: {
     port: 3000,
     open: false,
-    host: true
+    host: true,
+    watch: {
+      ignored: ['**/screenshots/**', '**/docs/**', '**/subagent_prompts/**', '**/scripts/**', '**/tests/**']
+    }
   },
   build: {
-    target: 'esnext'
+    target: 'esnext',
+    chunkSizeWarningLimit: 1000
   }
 });

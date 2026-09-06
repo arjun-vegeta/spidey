@@ -1,6 +1,7 @@
 import * as THREE from 'three';
-import { Enemy } from './Enemy';
+import { Enemy, EnemyState } from './Enemy';
 import { soundManager } from '../core/SoundManager';
+import { InkParticles } from '../effects/InkParticles';
 
 /**
  * Flying octagonal sketch drone with rotating rotors.
@@ -24,6 +25,26 @@ export class DroneEnemy extends Enemy {
   // Pre-dive telegraph: 0.5s dip + whine before darts (fairness)
   private telegraphTimer: number = -1;
 
+  // Concurrency gate: max 3 drones in firing telegraph at once
+  private static activeFiringTelegraphs: number = 0;
+  private firingToken: boolean = false;
+
+  public static resetConcurrency(): void {
+    DroneEnemy.activeFiringTelegraphs = 0;
+  }
+
+  private releaseFiringToken(): void {
+    if (this.firingToken) {
+      this.firingToken = false;
+      DroneEnemy.activeFiringTelegraphs = Math.max(0, DroneEnemy.activeFiringTelegraphs - 1);
+    }
+  }
+
+  // Tumbling wreck falling death state (1.2s before paper/ink burst)
+  private wreckTimer: number = 1.2;
+  private wreckVelocityY: number = 0;
+  private cachedParticles: InkParticles | null = null;
+
   // Visual rig parts
   private rotorBlades: THREE.Group[] = [];
   private droneBodyGroup!: THREE.Group;
@@ -34,6 +55,7 @@ export class DroneEnemy extends Enemy {
   private tmpToPlayer: THREE.Vector3 = new THREE.Vector3();
   private tmpMuzzle: THREE.Vector3 = new THREE.Vector3();
   private tmpAim: THREE.Vector3 = new THREE.Vector3();
+  private tmpMeshPos: THREE.Vector3 = new THREE.Vector3();
 
   constructor(position: THREE.Vector3) {
     // 60 HP: fast and agile aerial target (1 sniper shot or 2-3 pistol shots)
@@ -151,7 +173,7 @@ export class DroneEnemy extends Enemy {
     this.group.add(this.droneBodyGroup);
   }
 
-  protected updateAI(dt: number, playerPos: THREE.Vector3, _collidables: THREE.Mesh[]): void {
+  protected updateAI(dt: number, playerPos: THREE.Vector3, collidables: THREE.Mesh[]): void {
     // 1. High-speed propeller rotation
     for (const rotor of this.rotorBlades) {
       rotor.rotation.y += dt * 38.0;
@@ -188,6 +210,40 @@ export class DroneEnemy extends Enemy {
       myPos.addScaledVector(this.tmpMove, currentSpeed * dt);
     }
 
+    // 2b. Building avoidance: horizontal push-out from collidables bounding spheres (sampled every 3rd mesh, within 6m)
+    if (collidables.length > 0) {
+      for (let i = 0; i < collidables.length; i += 3) {
+        const mesh = collidables[i];
+        if (!mesh.geometry.boundingSphere) {
+          mesh.geometry.computeBoundingSphere();
+        }
+        const sphereRadius = mesh.geometry.boundingSphere ? mesh.geometry.boundingSphere.radius : 3.0;
+        mesh.getWorldPosition(this.tmpMeshPos);
+
+        // Check vertical proximity
+        if (Math.abs(myPos.y - this.tmpMeshPos.y) > sphereRadius + 4.0) continue;
+
+        const dx = myPos.x - this.tmpMeshPos.x;
+        const dz = myPos.z - this.tmpMeshPos.z;
+        const dist = Math.hypot(dx, dz);
+        const avoidThreshold = sphereRadius + 6.0;
+
+        if (dist < avoidThreshold && dist > 1e-4) {
+          const minSafeDist = sphereRadius + 1.5;
+          if (dist < minSafeDist) {
+            const overlap = minSafeDist - dist;
+            myPos.x += (dx / dist) * overlap;
+            myPos.z += (dz / dist) * overlap;
+          } else {
+            const pushFactor = (avoidThreshold - dist) / 6.0;
+            const pushSpeed = 6.0 * pushFactor * dt;
+            myPos.x += (dx / dist) * pushSpeed;
+            myPos.z += (dz / dist) * pushSpeed;
+          }
+        }
+      }
+    }
+
     // Organic hover vertical bobbing
     const hoverWobble = Math.sin(this.elapsed * 4.0) * 0.015;
     myPos.y += hoverWobble;
@@ -203,20 +259,25 @@ export class DroneEnemy extends Enemy {
     this.droneBodyGroup.rotation.z = THREE.MathUtils.lerp(this.droneBodyGroup.rotation.z, bankZ, dt * 6.0);
     this.droneBodyGroup.rotation.x = THREE.MathUtils.lerp(this.droneBodyGroup.rotation.x, bankX, dt * 6.0);
 
-    // 4. Attack: Twin red ink dart burst (telegraphed dive first)
+    // 4. Attack: Twin red ink dart burst (telegraphed dive first, max 3 drones telegraphing)
     if (this.telegraphTimer >= 0) {
       this.telegraphTimer -= dt;
       myPos.y -= 1.2 * dt; // visible dip before firing
       if (this.telegraphTimer <= 0) {
         this.telegraphTimer = -1;
+        this.releaseFiringToken();
         this.fireTwinDarts(playerPos);
         this.attackCooldownTimer = this.attackCooldown + (Math.random() - 0.5) * 0.3;
       }
     } else {
       this.attackCooldownTimer -= dt;
       if (this.attackCooldownTimer <= 0 && distToPlayer < 32.0 && this.spawnGrace <= 0) {
-        this.telegraphTimer = 0.5;
-        soundManager.playPredive();
+        if (DroneEnemy.activeFiringTelegraphs < 3) {
+          DroneEnemy.activeFiringTelegraphs++;
+          this.firingToken = true;
+          this.telegraphTimer = 0.5;
+          soundManager.playPredive();
+        }
       }
     }
   }
@@ -256,13 +317,82 @@ export class DroneEnemy extends Enemy {
 
   public override stagger(duration?: number, impulse?: THREE.Vector3): void {
     super.stagger(duration, impulse);
+    if (this.telegraphTimer >= 0) {
+      this.telegraphTimer = -1;
+      this.releaseFiringToken();
+    }
     // Violent tilt / wobble when shot
     this.droneBodyGroup.rotation.z = (Math.random() - 0.5) * 0.9;
     this.droneBodyGroup.rotation.x = (Math.random() - 0.5) * 0.9;
   }
 
-  public override die(hitPoint?: THREE.Vector3, isHeadshot?: boolean): void {
-    super.die(hitPoint, isHeadshot);
+  public override die(hitPoint?: THREE.Vector3, _isHeadshot: boolean = false): void {
+    if (this.isDead) return;
+    this.releaseFiringToken();
+
+    this.isDead = true;
+    this.isDying = true;
+    this.state = EnemyState.DEAD;
+    this.health = 0;
+    this.wreckTimer = 1.2;
+    this.wreckVelocityY = -2.0;
+
+    // Hide UI overlays
+    this.alertGroup.visible = false;
+    this.healthBarGroup.visible = false;
+
+    // Disable raycasting against meshes so tumbling wreck does not block bullets
+    for (const m of this.collidableMeshes) {
+      m.raycast = () => {};
+    }
+
+    soundManager.playEnemyDeath();
     soundManager.playWhistle();
+  }
+
+  public override disintegrate(particles: InkParticles): void {
+    if (!this.isDying) {
+      super.disintegrate(particles);
+      return;
+    }
+    // Stored until tumbling wreck finishes falling for 1.2s
+    this.cachedParticles = particles;
+  }
+
+  public override update(
+    dt: number,
+    playerPos: THREE.Vector3,
+    camera?: THREE.Camera,
+    collidables: THREE.Mesh[] = []
+  ): void {
+    if (this.isDying) {
+      this.wreckTimer -= dt;
+
+      // Gravity drop
+      this.wreckVelocityY -= 18.0 * dt;
+      this.group.position.y += this.wreckVelocityY * dt;
+
+      // Tumbling angular momentum on all axes
+      this.droneBodyGroup.rotation.x += dt * 7.5;
+      this.droneBodyGroup.rotation.y += dt * 5.0;
+      this.droneBodyGroup.rotation.z += dt * 9.5;
+
+      if (this.wreckTimer <= 0) {
+        this.isDying = false;
+        if (this.cachedParticles) {
+          super.disintegrate(this.cachedParticles);
+          this.cachedParticles = null;
+        }
+        this.droneBodyGroup.visible = false;
+      }
+      return;
+    }
+
+    super.update(dt, playerPos, camera, collidables);
+  }
+
+  public override dispose(): void {
+    this.releaseFiringToken();
+    super.dispose();
   }
 }

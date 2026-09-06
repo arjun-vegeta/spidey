@@ -10,6 +10,7 @@ interface Particle {
   isPaperScrap?: boolean;
   rotation?: number;
   rotSpeed?: number;
+  noGravity?: boolean;
 }
 
 interface Tracer {
@@ -204,6 +205,41 @@ export class InkParticles {
   }
 
   /**
+   * Spawns rising sketch-in ink strokes when an enemy spawns (0.8s)
+   */
+  public spawnSketchIn(pos: THREE.Vector3): void {
+    const count = 24;
+    const inkBlue = new THREE.Color(0x152778);
+    const inkDark = new THREE.Color(0x0a1440);
+    const inkRed = new THREE.Color(0xd63031);
+
+    for (let i = 0; i < count; i++) {
+      const offsetX = (Math.random() - 0.5) * 0.8;
+      const offsetY = Math.random() * 0.3;
+      const offsetZ = (Math.random() - 0.5) * 0.8;
+
+      const vel = new THREE.Vector3(
+        (Math.random() - 0.5) * 0.4,
+        Math.random() * 1.8 + 1.8, // 1.8 - 3.6 m/s rising strokes
+        (Math.random() - 0.5) * 0.4
+      );
+
+      const colorRoll = Math.random();
+      const color = colorRoll < 0.6 ? inkBlue : (colorRoll < 0.85 ? inkDark : inkRed);
+
+      this.addParticle({
+        position: pos.clone().add(new THREE.Vector3(offsetX, offsetY, offsetZ)),
+        velocity: vel,
+        color,
+        size: Math.random() * 0.05 + 0.03,
+        maxLife: 0.8,
+        life: 0,
+        noGravity: true
+      });
+    }
+  }
+
+  /**
    * Spawns a high-speed ballpoint pen bullet tracer line (pooled)
    */
   public spawnTracer(start: THREE.Vector3, end: THREE.Vector3, color: THREE.Color = new THREE.Color(0x152778)): void {
@@ -276,7 +312,9 @@ export class InkParticles {
       }
 
       // Physics
-      p.velocity.y -= gravity * dt;
+      if (!p.noGravity) {
+        p.velocity.y -= gravity * dt;
+      }
       p.position.addScaledVector(p.velocity, dt);
       if (p.rotation !== undefined && p.rotSpeed !== undefined) {
         p.rotation += p.rotSpeed * dt;

@@ -58,6 +58,7 @@ export abstract class Enemy {
   public health: number;
   public maxHealth: number;
   public isDead: boolean = false;
+  public isDying: boolean = false;
   public alerted: boolean = false;
 
   public scoreValue: number = 100;
@@ -262,7 +263,8 @@ export abstract class Enemy {
       this.alertGroup.visible = true;
       this.healthBarVisibleTimer = 4.0;
       this.healthBarGroup.visible = true;
-      soundManager.playAggro();
+      const dist = playerPos ? this.group.position.distanceTo(playerPos) : undefined;
+      soundManager.playAggro(dist);
 
       if (this.state === EnemyState.IDLE) {
         this.state = EnemyState.CHASE;
@@ -394,7 +396,7 @@ export abstract class Enemy {
     camera?: THREE.Camera,
     collidables: THREE.Mesh[] = []
   ): void {
-    if (this.isDead) return;
+    if (this.isDead && !this.isDying) return;
 
     this.elapsed += dt;
     if (this.spawnGrace > 0) this.spawnGrace -= dt;

@@ -38,6 +38,12 @@ export class Player {
   public hpRegenRate: number = 12.0;
   private lastDamageAt: number = -100;
 
+  // Footstep audio pacing
+  private footstepTimer: number = 0;
+
+  // Failed-web feedback hook (wired to HUD reticle shake)
+  public onDryWeb?: () => void;
+
   // Simplified collision shells (preferred over mesh sampling when bound)
   public worldCollider: WorldCollider | null = null;
   private pushScratch: PushResult = { x: 0, z: 0, nx: 0, nz: 0, pushed: false };
@@ -46,6 +52,12 @@ export class Player {
   private _upRay: THREE.Raycaster = new THREE.Raycaster();
 
   // Traversal & stunt score tracking
+  // ARCHITECTURAL DECISION (Milestone 1 / 26 / G):
+  // Slide is officially NO (CUT).
+  // Web-swinging, air-brake (S), and dive-assist (Ctrl) fully provide high-velocity
+  // and low-clearance traversal fantasies. Introducing a ground slide adds keybind
+  // contention with crouch/reel, risk of snagging on stepped terrain, and offers
+  // redundant gameplay utility.
   public isMidAir: boolean = false;
   public airTime: number = 0;
   public landingDip: number = 0;
@@ -100,7 +112,8 @@ export class Player {
     this.worldCollider = c;
   }
 
-  public reset(): void {    this.physics.reset(Player.SPAWN);
+  public reset(): void {
+    this.physics.reset(Player.SPAWN);
     this.yaw = 0;
     this.pitch = 0;
     this.cameraRoll = 0;
@@ -111,6 +124,9 @@ export class Player {
     this.lastDamageAt = -100;
     this.airTime = 0;
     this.landingDip = 0;
+    this.footstepTimer = 0;
+    soundManager.setHeartbeat(false);
+    soundManager.updateRopeStrain(false, 0, 0);
     this.webShooter.isWebActive = false;
     this.webShooter.currentTarget = null;
     this.weaponManager.resetAmmo();
@@ -128,12 +144,25 @@ export class Player {
     return this.physics.position;
   }
 
-  public takeDamage(amount: number): boolean {
+  public takeDamage(amount: number, attackerPos?: THREE.Vector3): boolean {
     if (this.isDead || this.invulnerabilityTimer > 0) return false;
 
     this.health = Math.max(0, this.health - amount);
     this.invulnerabilityTimer = 0.4; // 400ms i-frames
     this.lastDamageAt = performance.now() * 0.001;
+
+    // Directional pan calculation based on attacker position relative to camera right
+    let pan = 0;
+    if (attackerPos) {
+      const dx = attackerPos.x - this.physics.position.x;
+      const dz = attackerPos.z - this.physics.position.z;
+      const dist = Math.hypot(dx, dz);
+      if (dist > 0.01) {
+        const rightDot = (dx * this._rightFlat.x + dz * this._rightFlat.z) / dist;
+        pan = Math.max(-1, Math.min(1, rightDot));
+      }
+    }
+    soundManager.playPlayerHurt(pan);
 
     // Camera jolt
     this.pitch += (Math.random() - 0.5) * 0.08;
@@ -148,6 +177,8 @@ export class Player {
 
     if (this.health <= 0) {
       this.isDead = true;
+      soundManager.setHeartbeat(false);
+      soundManager.updateRopeStrain(false, 0, 0);
       soundManager.playEnemyDeath();
     }
     return true;
@@ -227,13 +258,34 @@ export class Player {
     if (inputDir.lengthSq() > 0.01) inputDir.normalize();
     const isMoving = inputDir.lengthSq() > 0.01;
 
+    // Footsteps on ground when moving (plan 17)
+    if (this.physics.isGrounded && !this.isDead) {
+      const horizSpeed = Math.hypot(this.physics.velocity.x, this.physics.velocity.z);
+      if (isMoving && horizSpeed > 1.2) {
+        this.footstepTimer -= dt;
+        if (this.footstepTimer <= 0) {
+          soundManager.playFootstep();
+          const stepInterval = Math.max(0.24, 0.50 - (horizSpeed / 14.0) * 0.24);
+          this.footstepTimer = stepInterval;
+        }
+      } else {
+        this.footstepTimer = 0.12;
+      }
+    } else {
+      this.footstepTimer = 0.15;
+    }
+
     // 3. Web-Slinging Actions
     // Scan for potential anchors ahead (forgiving cone + height bias + latch magnet)
     this.webShooter.scanForTargets(this.camera, collidables, this.physics.position, webAnchors);
 
     // Web attach (Hold right-click or E)
     if (this.input.webJustPressed) {
-      this.webShooter.shootWeb(undefined, this.physics.position);
+      const attached = this.webShooter.shootWeb(undefined, this.physics.position);
+      if (!attached) {
+        soundManager.playDryWeb();
+        if (this.onDryWeb) this.onDryWeb();
+      }
     } else if (!this.input.isWebHolding() && this.isSwinging) {
       // Released web: apply slingshot momentum boost if jumping
       this.webShooter.releaseWeb(this.input.isJumping(), forward);
@@ -287,12 +339,15 @@ export class Player {
     // World collision: ground raycast (floors/roofs) + capsule push-out (walls)
     this.resolveWorldCollisions(collidables);
 
-    // Landing dip feel & hard landing control damp (>25 m/s fall)
-    if (!wasGrounded && this.physics.isGrounded && fallSpeedBefore < -12) {
-      this.landingDip = Math.min(0.35, (-fallSpeedBefore - 12) * 0.02);
+    // Landing dip feel & soft/hard landing thuds
+    if (!wasGrounded && this.physics.isGrounded) {
       if (fallSpeedBefore < -25) {
+        this.landingDip = Math.min(0.35, (-fallSpeedBefore - 12) * 0.02);
         this.physics.controlDampTimer = 0.25;
-        soundManager.playImpactWall();
+        soundManager.playLandHard();
+      } else if (fallSpeedBefore < -8) {
+        this.landingDip = Math.min(0.25, (-fallSpeedBefore - 8) * 0.015);
+        soundManager.playLandSoft();
       }
     }
     this.landingDip = THREE.MathUtils.lerp(this.landingDip, 0, dt * 7.0);
@@ -306,9 +361,11 @@ export class Player {
     else this.airTime = 0;
     this.isMidAir = !this.physics.isGrounded;
 
-    // 5. Sound: Wind rush modulation based on velocity
+    // 5. Sound: Wind rush, rope strain, and sub-30HP heartbeat modulation
     const currentSpeed = this.physics.velocity.length();
     soundManager.updateWind(currentSpeed, 45.0);
+    soundManager.updateRopeStrain(this.isSwinging, currentSpeed, this.physics.isWebTaut ? 1.0 : 0.25);
+    soundManager.setHeartbeat(this.health < 30 && this.health > 0 && !this.isDead);
 
     // 6. Dynamic FOV based on speed, sniper scope, and holographic sight ADS
     const activeWep = this.weaponManager.activeWeapon;

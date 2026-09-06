@@ -45,6 +45,10 @@ export class SwingPhysics {
   //   momentum assist + forward glide for high-speed dive-bombs, strictly clamped at terminalVelocity (65.0 m/s).
   // - Zip ease curve (5.0m -> 2.5m, 62 m/s -> 28 m/s): Linear ease over final 5 meters ensures player arrives at
   //   mantle threshold smoothly so landing stick checks succeed without high-speed tunneling through colliders.
+  // - Slide Decision: Officially NO (CUT) per Milestone 1 / Section 26 / Agent G.
+  //   Web swinging, air brake (S), and dive assist (Ctrl) fully satisfy momentum-preservation
+  //   and clearance traversal fantasies. Ground sliding introduces control collisions with
+  //   crouch/reel and risk of snagging on stepped terrace edges without unique gameplay value.
   // =========================================================================
 
   // World constants

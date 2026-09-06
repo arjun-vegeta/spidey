@@ -19,6 +19,7 @@ export interface EnemyProjectile {
   mesh: THREE.Mesh;
   isSniper: boolean;
   kind: EnemyType;
+  nearMissTriggered?: boolean;
 }
 
 export interface KillEvent {
@@ -469,6 +470,8 @@ export class EnemyManager {
   private addEnemy(enemy: Enemy): void {
     this.enemies.push(enemy);
     this.scene.add(enemy.group);
+    this.particles.spawnSketchIn(enemy.group.position);
+    soundManager.playSpawnIn();
   }
 
   /**
@@ -693,7 +696,7 @@ export class EnemyManager {
     for (let i = this.enemies.length - 1; i >= 0; i--) {
       const enemy = this.enemies[i];
 
-      if (enemy.isDead) {
+      if (enemy.isDead && !enemy.isDying) {
         // Remove dead enemy from scene after disintegration
         this.scene.remove(enemy.group);
         enemy.dispose();
@@ -745,25 +748,30 @@ export class EnemyManager {
         continue;
       }
 
-      // Check collision against Player (skip while dead)
+      // Check collision and near-miss against Player (skip while dead)
       if (!player.isDead) {
         const dx = proj.position.x - playerPos.x;
         const dz = proj.position.z - playerPos.z;
         const horizDist = Math.hypot(dx, dz);
         const isWithinPlayerHeight = proj.position.y >= playerMinY && proj.position.y <= playerMaxY;
 
-      if (horizDist <= (playerRadius + proj.radius) && isWithinPlayerHeight) {
-        const wasAlive = !player.isDead;
-        player.takeDamage(proj.damage);
-        if (this.onPlayerDamaged) this.onPlayerDamaged(proj.position);
-        this.particles.spawnEnemyHit(proj.position, false);
-        soundManager.playImpactWall();
-        if (wasAlive && player.isDead) {
-          this.lastPlayerDeath = this.describeKiller(proj, player, camera);
+        if (horizDist <= (playerRadius + proj.radius) && isWithinPlayerHeight) {
+          const wasAlive = !player.isDead;
+          player.takeDamage(proj.damage, proj.position);
+          if (this.onPlayerDamaged) this.onPlayerDamaged(proj.position);
+          this.particles.spawnEnemyHit(proj.position, false);
+          if (wasAlive && player.isDead) {
+            this.lastPlayerDeath = this.describeKiller(proj, player, camera);
+          }
+          this.removeProjectile(i);
+          continue;
         }
-        this.removeProjectile(i);
-        continue;
-      }
+
+        // Near-miss whiz when an enemy projectile passes <2m without hitting
+        if (!proj.nearMissTriggered && horizDist < 2.0 && proj.position.y >= (playerMinY - 0.8) && proj.position.y <= (playerMaxY + 0.8)) {
+          proj.nearMissTriggered = true;
+          soundManager.playNearMissWhiz();
+        }
       }
 
       // Check collision against architecture (broadphase: only nearby meshes)
@@ -832,6 +840,8 @@ export class EnemyManager {
    * Resets all enemies and waves
    */
   public clear(): void {
+    DroneEnemy.resetConcurrency();
+    SniperEnemy.resetStaticState();
     for (const enemy of this.enemies) {
       this.scene.remove(enemy.group);
       enemy.dispose();

@@ -731,3 +731,39 @@ html, body {
 .hint-bar{position:absolute;bottom:196px;left:50%;transform:translateX(-50%);z-index:15;display:none;padding:8px 20px;font-size:17px;font-weight:700;letter-spacing:1px;color:#faf7ee;background:#152778;border-radius:3px;box-shadow:3px 3px 0 #d63031;white-space:nowrap}
 
 .build-stamp{position:absolute;right:10px;bottom:6px;z-index:15;font-size:11px;letter-spacing:1px;color:#152778;opacity:.45;pointer-events:none}
+
+/* Failed Web Reticle Shake (plan 7.1) */
+@keyframes reticle-shake {
+  0% { transform: translate(-50%, -50%) translate(0, 0); }
+  20% { transform: translate(-50%, -50%) translate(-5px, 2px); }
+  40% { transform: translate(-50%, -50%) translate(5px, -2px); }
+  60% { transform: translate(-50%, -50%) translate(-3px, -1px); }
+  80% { transform: translate(-50%, -50%) translate(3px, 1px); }
+  100% { transform: translate(-50%, -50%) translate(0, 0); }
+}
+
+.center-hud-anchor.reticle-shake,
+.crosshair-default.reticle-shake {
+  animation: reticle-shake 0.2s cubic-bezier(0.36, 0.07, 0.19, 0.97) both !important;
+}
+
+/* Debug Toggles Overlay (plan 33) */
+.debug-overlay {
+  position: absolute;
+  top: 14px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: rgba(250, 247, 238, 0.94);
+  border: 2px solid #152778;
+  padding: 4px 14px;
+  font-family: monospace;
+  font-size: 13px;
+  font-weight: 700;
+  color: #152778;
+  letter-spacing: 1px;
+  pointer-events: none;
+  border-radius: 2px;
+  box-shadow: 2px 2px 0px rgba(21, 39, 120, 0.35);
+  white-space: nowrap;
+  z-index: 50;
+}

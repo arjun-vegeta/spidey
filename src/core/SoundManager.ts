@@ -8,11 +8,26 @@ export class SoundManager {
   private ctx: AudioContext | null = null;
   private masterGain: GainNode | null = null;
   private sfxGain: GainNode | null = null;
+  private compressor: DynamicsCompressorNode | null = null;
   
   // Wind rush procedural audio nodes
   private windNode: AudioBufferSourceNode | null = null;
   private windGain: GainNode | null = null;
   private windFilter: BiquadFilterNode | null = null;
+
+  // Sniper charge procedural audio nodes
+  private sniperChargeOsc: OscillatorNode | null = null;
+  private sniperChargeGain: GainNode | null = null;
+  private sniperChargeFilter: BiquadFilterNode | null = null;
+
+  // Rope strain loop procedural audio nodes
+  private ropeStrainOsc: OscillatorNode | null = null;
+  private ropeStrainGain: GainNode | null = null;
+  private ropeStrainFilter: BiquadFilterNode | null = null;
+
+  // Heartbeat loop state (<30 HP)
+  private heartbeatTimer: ReturnType<typeof setInterval> | null = null;
+  private isHeartbeatRunning: boolean = false;
 
   private isMuted: boolean = false;
   private initialized: boolean = false;
@@ -54,9 +69,18 @@ export class SoundManager {
       this.masterGain.gain.setValueAtTime(this.isMuted ? 0 : this.volume, this.ctx.currentTime);
       this.masterGain.connect(this.ctx.destination);
 
+      // Final mix pass: master DynamicsCompressor to prevent digital clipping under full-auto gunfire & layered SFX
+      this.compressor = this.ctx.createDynamicsCompressor();
+      this.compressor.threshold.setValueAtTime(-3.0, this.ctx.currentTime);
+      this.compressor.knee.setValueAtTime(6.0, this.ctx.currentTime);
+      this.compressor.ratio.setValueAtTime(12.0, this.ctx.currentTime);
+      this.compressor.attack.setValueAtTime(0.003, this.ctx.currentTime);
+      this.compressor.release.setValueAtTime(0.1, this.ctx.currentTime);
+      this.compressor.connect(this.masterGain);
+
       this.sfxGain = this.ctx.createGain();
-      this.sfxGain.gain.setValueAtTime(0.8, this.ctx.currentTime);
-      this.sfxGain.connect(this.masterGain);
+      this.sfxGain.gain.setValueAtTime(0.75, this.ctx.currentTime);
+      this.sfxGain.connect(this.compressor);
 
       this.initWindSynth();
       this.initialized = true;
@@ -608,9 +632,9 @@ export class SoundManager {
   }
 
   /**
-   * Enemy alert ping when a new enemy aggros (positional-ish, quiet)
+   * Enemy alert ping when a new enemy aggros (positional-ish, quiet, distance-attenuated)
    */
-  public playAggro(): void {
+  public playAggro(dist?: number): void {
     this.ensureContext();
     if (!this.ctx || !this.sfxGain) return;
     const now = this.ctx.currentTime;
@@ -619,12 +643,143 @@ export class SoundManager {
     osc.type = 'square';
     osc.frequency.setValueAtTime(620, now);
     osc.frequency.setValueAtTime(830, now + 0.07);
-    gain.gain.setValueAtTime(0.12, now);
+
+    let vol = 0.12;
+    if (dist !== undefined) {
+      const norm = Math.max(0, Math.min(1, (dist - 4) / 46));
+      vol = 0.15 - norm * 0.12; // ranges from 0.15 down to 0.03
+    }
+
+    gain.gain.setValueAtTime(vol, now);
     gain.gain.exponentialRampToValueAtTime(0.001, now + 0.14);
     osc.connect(gain);
     gain.connect(this.sfxGain);
     osc.start(now);
     osc.stop(now + 0.15);
+  }
+
+  /**
+   * Sniper reposition telegraph: rising tick sound at current perch before dash
+   */
+  public playSniperRelocate(): void {
+    this.ensureContext();
+    if (!this.ctx || !this.sfxGain) return;
+    const now = this.ctx.currentTime;
+    for (let i = 0; i < 3; i++) {
+      const t = now + i * 0.12;
+      const osc = this.ctx.createOscillator();
+      const gain = this.ctx.createGain();
+      osc.type = 'triangle';
+      osc.frequency.setValueAtTime(900 + i * 350, t);
+      gain.gain.setValueAtTime(0.14, t);
+      gain.gain.exponentialRampToValueAtTime(0.001, t + 0.06);
+      osc.connect(gain);
+      gain.connect(this.sfxGain);
+      osc.start(t);
+      osc.stop(t + 0.07);
+    }
+  }
+
+  /**
+   * Enemy sketch-in spawn sound (pencil hatching / pen scratch)
+   */
+  public playSpawnIn(): void {
+    this.ensureContext();
+    if (!this.ctx || !this.sfxGain) return;
+    const now = this.ctx.currentTime;
+
+    const noise = this.createNoiseBuffer(0.18);
+    const source = this.ctx.createBufferSource();
+    source.buffer = noise;
+
+    const filter = this.ctx.createBiquadFilter();
+    filter.type = 'bandpass';
+    filter.frequency.setValueAtTime(1400, now);
+    filter.frequency.exponentialRampToValueAtTime(2600, now + 0.16);
+    filter.Q.setValueAtTime(3.0, now);
+
+    const gain = this.ctx.createGain();
+    gain.gain.setValueAtTime(0.16, now);
+    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.18);
+
+    source.connect(filter);
+    filter.connect(gain);
+    gain.connect(this.sfxGain);
+
+    source.start(now);
+    source.stop(now + 0.19);
+  }
+
+  /**
+   * Starts sniper charge whine (pitch rises with chargeTimer)
+   */
+  public startSniperCharge(): void {
+    this.ensureContext();
+    if (!this.ctx || !this.sfxGain) return;
+    this.stopSniperCharge();
+
+    const now = this.ctx.currentTime;
+    this.sniperChargeOsc = this.ctx.createOscillator();
+    this.sniperChargeGain = this.ctx.createGain();
+    this.sniperChargeFilter = this.ctx.createBiquadFilter();
+
+    this.sniperChargeOsc.type = 'sawtooth';
+    this.sniperChargeOsc.frequency.setValueAtTime(320, now);
+
+    this.sniperChargeFilter.type = 'lowpass';
+    this.sniperChargeFilter.frequency.setValueAtTime(2000, now);
+
+    this.sniperChargeGain.gain.setValueAtTime(0.02, now);
+
+    this.sniperChargeOsc.connect(this.sniperChargeFilter);
+    this.sniperChargeFilter.connect(this.sniperChargeGain);
+    this.sniperChargeGain.connect(this.sfxGain);
+
+    this.sniperChargeOsc.start(now);
+  }
+
+  /**
+   * Updates rising sniper charge pitch and volume
+   */
+  public updateSniperCharge(progress: number): void {
+    if (!this.ctx || !this.sniperChargeOsc || !this.sniperChargeGain) return;
+    const clamped = Math.min(1, Math.max(0, progress));
+    const now = this.ctx.currentTime;
+    const freq = 320 + Math.pow(clamped, 1.8) * 1480;
+    this.sniperChargeOsc.frequency.setTargetAtTime(freq, now, 0.03);
+    const gain = 0.02 + clamped * 0.14;
+    this.sniperChargeGain.gain.setTargetAtTime(gain, now, 0.03);
+  }
+
+  /**
+   * Stops sniper charge whine on firing or cancel
+   */
+  public stopSniperCharge(): void {
+    if (!this.sniperChargeOsc || !this.ctx) {
+      this.sniperChargeOsc = null;
+      this.sniperChargeGain = null;
+      this.sniperChargeFilter = null;
+      return;
+    }
+    try {
+      this.sniperChargeGain?.gain.setTargetAtTime(0.001, this.ctx.currentTime, 0.02);
+      const osc = this.sniperChargeOsc;
+      this.sniperChargeOsc = null;
+      this.sniperChargeGain = null;
+      this.sniperChargeFilter = null;
+      setTimeout(() => {
+        try {
+          osc.stop();
+          osc.disconnect();
+        } catch {
+          // Ignored if already stopped
+        }
+      }, 50);
+    } catch {
+      this.sniperChargeOsc = null;
+      this.sniperChargeGain = null;
+      this.sniperChargeFilter = null;
+    }
   }
 
   /**
@@ -732,6 +887,346 @@ export class SoundManager {
       osc.start(now + idx * 0.08);
       osc.stop(now + idx * 0.08 + 0.65);
     });
+  }
+
+  /**
+   * Footstep sound on ground (paper scuff / crisp sole tap)
+   */
+  public playFootstep(): void {
+    this.ensureContext();
+    if (!this.ctx || !this.sfxGain) return;
+    const now = this.ctx.currentTime;
+
+    const noise = this.createNoiseBuffer(0.04);
+    const src = this.ctx.createBufferSource();
+    src.buffer = noise;
+
+    const filter = this.ctx.createBiquadFilter();
+    filter.type = 'bandpass';
+    filter.frequency.setValueAtTime(750, now);
+    filter.Q.setValueAtTime(2.0, now);
+
+    const gain = this.ctx.createGain();
+    gain.gain.setValueAtTime(0.065, now);
+    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.04);
+
+    src.connect(filter);
+    filter.connect(gain);
+    gain.connect(this.sfxGain);
+
+    src.start(now);
+    src.stop(now + 0.045);
+  }
+
+  /**
+   * Soft landing floor thud (-8 m/s to -25 m/s fall speed)
+   */
+  public playLandSoft(): void {
+    this.ensureContext();
+    if (!this.ctx || !this.sfxGain) return;
+    const now = this.ctx.currentTime;
+
+    const osc = this.ctx.createOscillator();
+    const gain = this.ctx.createGain();
+    osc.type = 'sine';
+    osc.frequency.setValueAtTime(110, now);
+    osc.frequency.exponentialRampToValueAtTime(40, now + 0.08);
+
+    gain.gain.setValueAtTime(0.24, now);
+    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.08);
+
+    osc.connect(gain);
+    gain.connect(this.sfxGain);
+
+    osc.start(now);
+    osc.stop(now + 0.09);
+  }
+
+  /**
+   * Hard landing floor thud (>25 m/s fall speed)
+   */
+  public playLandHard(): void {
+    this.ensureContext();
+    if (!this.ctx || !this.sfxGain) return;
+    const now = this.ctx.currentTime;
+
+    // Sub-bass heavy thud
+    const osc = this.ctx.createOscillator();
+    const gain = this.ctx.createGain();
+    osc.type = 'sine';
+    osc.frequency.setValueAtTime(85, now);
+    osc.frequency.exponentialRampToValueAtTime(28, now + 0.18);
+
+    gain.gain.setValueAtTime(0.55, now);
+    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.18);
+
+    osc.connect(gain);
+    gain.connect(this.sfxGain);
+
+    osc.start(now);
+    osc.stop(now + 0.19);
+
+    // Dust/concrete crunch overlay
+    const noise = this.createNoiseBuffer(0.12);
+    const src = this.ctx.createBufferSource();
+    src.buffer = noise;
+
+    const filter = this.ctx.createBiquadFilter();
+    filter.type = 'lowpass';
+    filter.frequency.setValueAtTime(450, now);
+
+    const nGain = this.ctx.createGain();
+    nGain.gain.setValueAtTime(0.22, now);
+    nGain.gain.exponentialRampToValueAtTime(0.001, now + 0.12);
+
+    src.connect(filter);
+    filter.connect(nGain);
+    nGain.connect(this.sfxGain);
+
+    src.start(now);
+    src.stop(now + 0.13);
+  }
+
+  /**
+   * Player hurt impact thud with optional directional stereo pan (-1 left .. +1 right)
+   */
+  public playPlayerHurt(pan?: number): void {
+    this.ensureContext();
+    if (!this.ctx || !this.sfxGain) return;
+    const now = this.ctx.currentTime;
+
+    let targetNode: AudioNode = this.sfxGain;
+    if (typeof pan === 'number' && typeof this.ctx.createStereoPanner === 'function') {
+      try {
+        const panner = this.ctx.createStereoPanner();
+        panner.pan.setValueAtTime(Math.max(-1, Math.min(1, pan)), now);
+        panner.connect(this.sfxGain);
+        targetNode = panner;
+      } catch {
+        targetNode = this.sfxGain;
+      }
+    }
+
+    // Heavy directional body thud
+    const osc = this.ctx.createOscillator();
+    const gain = this.ctx.createGain();
+    osc.type = 'triangle';
+    osc.frequency.setValueAtTime(160, now);
+    osc.frequency.exponentialRampToValueAtTime(35, now + 0.15);
+
+    gain.gain.setValueAtTime(0.45, now);
+    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.15);
+
+    osc.connect(gain);
+    gain.connect(targetNode);
+
+    osc.start(now);
+    osc.stop(now + 0.16);
+
+    // Grunt-ish ink splatter noise
+    const noise = this.createNoiseBuffer(0.08);
+    const src = this.ctx.createBufferSource();
+    src.buffer = noise;
+
+    const filter = this.ctx.createBiquadFilter();
+    filter.type = 'bandpass';
+    filter.frequency.setValueAtTime(650, now);
+
+    const nGain = this.ctx.createGain();
+    nGain.gain.setValueAtTime(0.25, now);
+    nGain.gain.exponentialRampToValueAtTime(0.001, now + 0.08);
+
+    src.connect(filter);
+    filter.connect(nGain);
+    nGain.connect(targetNode);
+
+    src.start(now);
+    src.stop(now + 0.09);
+  }
+
+  /**
+   * Sub-30 HP tension heartbeat loop (starts/stops on threshold)
+   */
+  public setHeartbeat(active: boolean): void {
+    if (!active) {
+      if (this.heartbeatTimer !== null) {
+        clearInterval(this.heartbeatTimer);
+        this.heartbeatTimer = null;
+      }
+      this.isHeartbeatRunning = false;
+      return;
+    }
+
+    if (this.isHeartbeatRunning) return;
+    this.isHeartbeatRunning = true;
+
+    const pulse = () => {
+      if (!this.ctx || !this.sfxGain || !this.isHeartbeatRunning) return;
+      const now = this.ctx.currentTime;
+
+      // Lub: first thump
+      const osc1 = this.ctx.createOscillator();
+      const gain1 = this.ctx.createGain();
+      osc1.type = 'sine';
+      osc1.frequency.setValueAtTime(58, now);
+      osc1.frequency.exponentialRampToValueAtTime(40, now + 0.07);
+
+      gain1.gain.setValueAtTime(0.22, now);
+      gain1.gain.exponentialRampToValueAtTime(0.001, now + 0.07);
+
+      osc1.connect(gain1);
+      gain1.connect(this.sfxGain);
+
+      osc1.start(now);
+      osc1.stop(now + 0.08);
+
+      // Dub: second heavier thump 0.12s later
+      const osc2 = this.ctx.createOscillator();
+      const gain2 = this.ctx.createGain();
+      osc2.type = 'sine';
+      osc2.frequency.setValueAtTime(50, now + 0.12);
+      osc2.frequency.exponentialRampToValueAtTime(32, now + 0.22);
+
+      gain2.gain.setValueAtTime(0.28, now + 0.12);
+      gain2.gain.exponentialRampToValueAtTime(0.001, now + 0.22);
+
+      osc2.connect(gain2);
+      gain2.connect(this.sfxGain);
+
+      osc2.start(now + 0.12);
+      osc2.stop(now + 0.23);
+    };
+
+    pulse();
+    this.heartbeatTimer = setInterval(pulse, 820);
+  }
+
+  /**
+   * Near-miss whiz when an enemy projectile passes <2m
+   */
+  public playNearMissWhiz(): void {
+    this.ensureContext();
+    if (!this.ctx || !this.sfxGain) return;
+    const now = this.ctx.currentTime;
+
+    const osc = this.ctx.createOscillator();
+    const gain = this.ctx.createGain();
+    osc.type = 'sine';
+    osc.frequency.setValueAtTime(2400, now);
+    osc.frequency.exponentialRampToValueAtTime(450, now + 0.11);
+
+    gain.gain.setValueAtTime(0.02, now);
+    gain.gain.linearRampToValueAtTime(0.18, now + 0.03);
+    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.11);
+
+    osc.connect(gain);
+    gain.connect(this.sfxGain);
+
+    osc.start(now);
+    osc.stop(now + 0.12);
+  }
+
+  /**
+   * Failed web feedback: dry "thwip" / empty click sound
+   */
+  public playDryWeb(): void {
+    this.ensureContext();
+    if (!this.ctx || !this.sfxGain) return;
+    const now = this.ctx.currentTime;
+
+    const osc = this.ctx.createOscillator();
+    const gain = this.ctx.createGain();
+    osc.type = 'triangle';
+    osc.frequency.setValueAtTime(1400, now);
+    osc.frequency.exponentialRampToValueAtTime(260, now + 0.04);
+
+    gain.gain.setValueAtTime(0.22, now);
+    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.04);
+
+    osc.connect(gain);
+    gain.connect(this.sfxGain);
+
+    osc.start(now);
+    osc.stop(now + 0.05);
+
+    const noise = this.createNoiseBuffer(0.03);
+    const src = this.ctx.createBufferSource();
+    src.buffer = noise;
+
+    const filter = this.ctx.createBiquadFilter();
+    filter.type = 'highpass';
+    filter.frequency.setValueAtTime(1600, now);
+
+    const nGain = this.ctx.createGain();
+    nGain.gain.setValueAtTime(0.18, now);
+    nGain.gain.exponentialRampToValueAtTime(0.001, now + 0.03);
+
+    src.connect(filter);
+    filter.connect(nGain);
+    nGain.connect(this.sfxGain);
+
+    src.start(now);
+    src.stop(now + 0.035);
+  }
+
+  /**
+   * Rope strain loop while swinging, pitched by speed & tension
+   */
+  public updateRopeStrain(isSwinging: boolean, speed: number, tension: number): void {
+    if (!this.ctx || !this.sfxGain) return;
+    const now = this.ctx.currentTime;
+
+    if (!isSwinging) {
+      if (this.ropeStrainGain) {
+        this.ropeStrainGain.gain.setTargetAtTime(0.0001, now, 0.04);
+      }
+      return;
+    }
+
+    if (!this.ropeStrainOsc || !this.ropeStrainGain || !this.ropeStrainFilter) {
+      this.ropeStrainOsc = this.ctx.createOscillator();
+      this.ropeStrainGain = this.ctx.createGain();
+      this.ropeStrainFilter = this.ctx.createBiquadFilter();
+
+      this.ropeStrainOsc.type = 'triangle';
+      this.ropeStrainOsc.frequency.setValueAtTime(120, now);
+
+      this.ropeStrainFilter.type = 'bandpass';
+      this.ropeStrainFilter.frequency.setValueAtTime(240, now);
+      this.ropeStrainFilter.Q.setValueAtTime(2.5, now);
+
+      this.ropeStrainGain.gain.setValueAtTime(0.001, now);
+
+      this.ropeStrainOsc.connect(this.ropeStrainFilter);
+      this.ropeStrainFilter.connect(this.ropeStrainGain);
+      this.ropeStrainGain.connect(this.sfxGain);
+
+      this.ropeStrainOsc.start(now);
+    }
+
+    const t = Math.max(0, Math.min(1, tension));
+    const targetFreq = 100 + Math.min(speed, 65) * 3.2 + t * 90;
+    const targetVol = Math.min(0.14, 0.02 + (Math.min(speed, 65) / 45) * 0.08 * t);
+
+    this.ropeStrainOsc.frequency.setTargetAtTime(targetFreq, now, 0.05);
+    this.ropeStrainFilter.frequency.setTargetAtTime(targetFreq * 1.5, now, 0.05);
+    this.ropeStrainGain.gain.setTargetAtTime(targetVol, now, 0.05);
+  }
+
+  public stopRopeStrain(): void {
+    if (this.ropeStrainGain && this.ctx) {
+      this.ropeStrainGain.gain.setTargetAtTime(0.0001, this.ctx.currentTime, 0.02);
+    }
+  }
+
+  /**
+   * Stops all looping sounds (wind, heartbeat, rope strain, sniper charge)
+   */
+  public stopAllLoops(): void {
+    this.setHeartbeat(false);
+    this.stopRopeStrain();
+    this.stopSniperCharge();
+    this.updateWind(0, 45);
   }
 
   /**

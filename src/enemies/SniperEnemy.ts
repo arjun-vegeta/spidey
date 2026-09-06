@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { Enemy, EnemyState } from './Enemy';
+import { soundManager } from '../core/SoundManager';
 
 /**
  * High-vantage marksman perched on construction cranes, rooftops, and catwalk beams.
@@ -18,6 +19,7 @@ export class SniperEnemy extends Enemy {
   // Visual rig parts
   private rifleGroup!: THREE.Group;
   private muzzleSocket!: THREE.Object3D;
+  private glintMesh!: THREE.Mesh;
 
   // Red laser sight tracking line
   private laserLine!: THREE.Line;
@@ -43,6 +45,12 @@ export class SniperEnemy extends Enemy {
   private preCharge: number = 0;
   private shotsFired: number = 0;
   private repositionTarget: THREE.Vector3 | null = null;
+  private repositionTelegraphTimer: number = 0;
+  private hasChargeSound: boolean = false;
+
+  public static resetStaticState(): void {
+    SniperEnemy.activeChargers = 0;
+  }
 
   constructor(position: THREE.Vector3) {
     // 70 HP: high damage glass cannon (1 sniper headshot or 3 pistol shots)
@@ -137,6 +145,14 @@ export class SniperEnemy extends Enemy {
     lens.position.set(0, 0.12, 0.43);
     this.rifleGroup.add(lens);
 
+    // Reposition telegraph glint star (visible during 0.5s pre-dash at current perch)
+    const glintGeom = new THREE.OctahedronGeometry(0.18, 0);
+    this.glintMesh = new THREE.Mesh(glintGeom, this.accentRedMat);
+    this.glintMesh.position.set(0, 0.12, 0.44);
+    this.glintMesh.visible = false;
+    this.glintMesh.userData = { isDecor: true };
+    this.rifleGroup.add(this.glintMesh);
+
     // Muzzle Socket
     this.muzzleSocket = new THREE.Object3D();
     this.muzzleSocket.position.set(0, 0.02, 1.66);
@@ -215,8 +231,22 @@ export class SniperEnemy extends Enemy {
     // Face player
     this.facePosition(playerPos);
 
-    // Reposition dash (late waves): move first, shoot later
+    // Reposition dash (late waves): telegraph at CURRENT perch for 0.5s with glint, then dash
     if (this.repositionTarget) {
+      if (this.repositionTelegraphTimer > 0) {
+        this.repositionTelegraphTimer -= dt;
+        this.glintMesh.visible = true;
+        const progress = Math.max(0, this.repositionTelegraphTimer / 0.5);
+        const pulse = 1.0 + Math.sin(progress * Math.PI) * 1.5;
+        this.glintMesh.scale.set(pulse, pulse, pulse);
+
+        if (this.repositionTelegraphTimer <= 0) {
+          this.glintMesh.visible = false;
+        }
+        this.facePosition(playerPos);
+        return;
+      }
+
       this.tmpDir.copy(this.repositionTarget).sub(this.group.position);
       this.tmpDir.y = 0;
       const rd = this.tmpDir.length();
@@ -259,14 +289,23 @@ export class SniperEnemy extends Enemy {
     // Charge Sniper Laser!
     this.state = EnemyState.ATTACK;
     this.isAimingAtPlayer = true;
+    if (!this.hasChargeSound) {
+      this.hasChargeSound = true;
+      soundManager.startSniperCharge();
+    }
     this.currentAimTarget.lerp(this.tmpTarget, Math.min(1, dt * 8.0)); // Smooth tracking with slight momentum
     this.chargeTimer += dt;
+    soundManager.updateSniperCharge(this.chargeTimer / this.chargeDuration);
 
     // Update laser visual
     this.updateLaserSight(this.tmpMuzzle, this.currentAimTarget);
 
     // 2.0s charge complete: FIRE!
     if (this.chargeTimer >= this.chargeDuration) {
+      if (this.hasChargeSound) {
+        this.hasChargeSound = false;
+        soundManager.stopSniperCharge();
+      }
       this.fireSniperShot(this.tmpMuzzle, this.tmpTarget);
       this.chargeTimer = 0;
       this.shotCooldownTimer = this.shotCooldown;
@@ -314,6 +353,10 @@ export class SniperEnemy extends Enemy {
   }
 
   private cancelAim(): void {
+    if (this.hasChargeSound) {
+      this.hasChargeSound = false;
+      soundManager.stopSniperCharge();
+    }
     this.releaseToken();
     this.isAimingAtPlayer = false;
     this.laserLine.visible = false;
@@ -354,7 +397,9 @@ export class SniperEnemy extends Enemy {
       this.repositionTarget = this.group.position.clone().add(
         new THREE.Vector3(-side.z * dir * dist, 0, side.x * dir * dist)
       );
+      this.repositionTelegraphTimer = 0.5;
       this.shotsFired = 0;
+      soundManager.playSniperRelocate();
     }
   }
 
@@ -368,16 +413,22 @@ export class SniperEnemy extends Enemy {
 
   public override stagger(duration?: number, impulse?: THREE.Vector3): void {
     super.stagger(duration, impulse);
+    if (this.glintMesh) this.glintMesh.visible = false;
+    this.repositionTelegraphTimer = 0;
     // Stagger disrupts sniper lock-on
     this.cancelAim();
   }
 
   public override die(hitPoint?: THREE.Vector3, isHeadshot?: boolean): void {
+    if (this.glintMesh) this.glintMesh.visible = false;
+    this.repositionTelegraphTimer = 0;
     super.die(hitPoint, isHeadshot);
     this.cancelAim();
   }
 
   public override dispose(): void {
+    if (this.glintMesh) this.glintMesh.visible = false;
+    this.repositionTelegraphTimer = 0;
     this.cancelAim();
     super.dispose();
     this.laserGeometry.dispose();

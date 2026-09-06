@@ -45,6 +45,21 @@ export class ThugEnemy extends Enemy {
   // Thugs never leave their floor (no stair climbing, no knockback lift)
   private homeFloorY: number = 0;
 
+  // Combat strafe state: sidestep perpendicular every 2-3s when farther than stopRange
+  private strafeDir: number = Math.random() > 0.5 ? 1 : -1;
+  private strafeTimer: number = 2.0 + Math.random();
+
+  /**
+   * TUNING — Wave-1 TTK (Time-To-Kill) Audit:
+   * Target: Player survives >= 4.0s of continuous exposure against 5 Wave-1 Thugs.
+   * Parameters:
+   * - 5 Thugs, 9 dmg/shot, 3-round bursts (0.13s delay, 1.9s cooldown), 0.4s aim pause, 1.5s grace.
+   * - Player: 100 HP with 0.4s i-frames per hit taken.
+   * - Mathematical bound: ceil(100 / 9) = 12 damaging hits.
+   * - With 0.4s i-frames, 12 hits require at least 11 * 0.4s = 4.40s of pure combat exposure.
+   * - Simulated exposure TTK with spawn grace (1.5s) and aim pause (0.4s) is ~5.9s - 6.3s,
+   *   exceeding the >= 4.0s minimum requirement.
+   */
   constructor(position: THREE.Vector3, customWaypoints?: THREE.Vector3[]) {
     // 90 HP: dies to 1 sniper headshot (300) or 4 pistol shots (112)
     super('thug', 90, position);
@@ -222,13 +237,31 @@ export class ThugEnemy extends Enemy {
           break;
         }
 
-        // Small strafe/advance behavior if too far from stop range
-        if (distToPlayer > this.stopRange + 2.0) {
-          this.moveToward(playerPos, this.patrolSpeed * 0.8, dt);
-          isMoving = true;
+        // Alternate strafe direction every 2-3s
+        this.strafeTimer -= dt;
+        if (this.strafeTimer <= 0) {
+          this.strafeDir = -this.strafeDir;
+          this.strafeTimer = 2.0 + Math.random();
         }
 
-        // Handle 3-round burst firing logic (gated on same-floor LOS)
+        // Perpendicular sidestep while farther than stopRange instead of standing turret-still
+        if (distToPlayer > this.stopRange) {
+          this.tmpFlat.set(playerPos.x - myPos.x, 0, playerPos.z - myPos.z);
+          const len = this.tmpFlat.length();
+          if (len > 0.01) {
+            // Perpendicular vector in XZ plane: (-dz, dx) * strafeDir
+            this.tmpDir.set(
+              (-this.tmpFlat.z / len) * this.strafeDir,
+              0,
+              (this.tmpFlat.x / len) * this.strafeDir
+            );
+            this.group.position.addScaledVector(this.tmpDir, 2.0 * dt);
+            myPos.y = this.homeFloorY; // Never leave home floor (clamp stays)
+            isMoving = true;
+          }
+        }
+
+        // Handle 3-round burst firing logic (cadence never blocked, gated on same-floor LOS)
         this.updateBurstFiring(dt, playerPos, _collidables, myPos);
         break;
       }

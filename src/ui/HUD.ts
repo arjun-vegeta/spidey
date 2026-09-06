@@ -201,6 +201,9 @@ export class HUD {
       <!-- Onboarding hint (one at a time, bottom-center) -->
       <div id="hint-bar" class="hint-bar"></div>
 
+      <!-- Debug Toggles Overlay (7/8/9/0) -->
+      <div id="debug-overlay" class="debug-overlay" style="display:none"></div>
+
       <!-- Pause menu + settings -->
       <div id="pause-menu" class="pause-menu" style="display:none">
         <div class="pause-card">
@@ -266,10 +269,12 @@ export class HUD {
     console.log('%c spidey build ' + __BUILD_ID__, 'color:#152778;font-weight:bold');
     this.pauseMenuEl = this.container.querySelector('#pause-menu');
     this.hintBarEl = this.container.querySelector('#hint-bar');
+    this.debugOverlayEl = this.container.querySelector('#debug-overlay');
   }
 
   private pauseMenuEl: HTMLElement | null = null;
   private hintBarEl: HTMLElement | null = null;
+  private debugOverlayEl: HTMLElement | null = null;
   private lastHintText: string = '__none__';
 
   private wirePauseMenu(): void {
@@ -794,5 +799,33 @@ export class HUD {
       div.innerHTML = `${p.text} <span class="popup-pts">+${p.points}</span>`;
       this.popupContainerElement.appendChild(div);
     }
+  }
+
+  /**
+   * Failed web feedback: trigger shake animation on the reticle (plan 7.1)
+   */
+  public triggerDryWebShake(): void {
+    const el = this.centerCrosshairElement;
+    if (!el) return;
+    el.classList.remove('reticle-shake');
+    // Force reflow to re-trigger CSS keyframes
+    void el.offsetWidth;
+    el.classList.add('reticle-shake');
+    setTimeout(() => {
+      el.classList.remove('reticle-shake');
+    }, 220);
+  }
+
+  /**
+   * Debug toggles overlay status update (plan 33)
+   */
+  public updateDebugOverlay(statusText: string | null): void {
+    if (!this.debugOverlayEl) return;
+    if (!statusText) {
+      this.debugOverlayEl.style.display = 'none';
+      return;
+    }
+    this.debugOverlayEl.style.display = 'block';
+    this.debugOverlayEl.textContent = statusText;
   }
 }

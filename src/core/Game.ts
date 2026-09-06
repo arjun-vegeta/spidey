@@ -9,6 +9,7 @@ import { loadSettings, saveSettings, SettingsData } from './Settings';
 import { soundManager } from './SoundManager';
 import { FireResult } from '../weapons/BaseWeapon';
 import { InkShaderMaterial } from '../shaders/InkShaderMaterial';
+import { DebugToggles } from './DebugToggles';
 
 export class Game {
   public scene: THREE.Scene;
@@ -21,6 +22,7 @@ export class Game {
   public enemyManager: EnemyManager;
   public particles: InkParticles;
   public hud: HUD;
+  public debugToggles: DebugToggles;
 
   private isRunning: boolean = false;
   private lastTime: number = 0;
@@ -85,6 +87,17 @@ export class Game {
     this.player.bindCollider(this.cityBuilder.getWorldCollider());
     this.mapBuildings = this.cityBuilder.getMapBuildings();
     this.webAnchors = this.cityBuilder.getWebAnchors();
+
+    // Failed-web feedback wired to HUD reticle shake (plan 7.1)
+    this.player.onDryWeb = () => this.hud.triggerDryWebShake();
+
+    // Debug toggles (plan 33): ?showcolliders, ?showlatches, ?debugyard, ?debugrange & 7/8/9/0 keys
+    this.debugToggles = new DebugToggles(
+      this.scene,
+      this.cityBuilder.getWorldCollider(),
+      this.webAnchors,
+      this.hud
+    );
 
     // HUD wave flow + rewards
     this.enemyManager.onWaveStart = (wave) => {
@@ -476,7 +489,7 @@ export class Game {
     this.enemyManager.clear();
     this.hud.setPaused(false);
     this.hud.hideDeathScreen();
-    soundManager.updateWind(0, 45);
+    soundManager.stopAllLoops();
 
     if (document.pointerLockElement) {
       document.exitPointerLock();
