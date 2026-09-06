@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <title>Spider-Man // Hand-Drawn Blueprint Ink FPS</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🕷️</text></svg>">
+</head>
+<body>
+  <!-- 3D WebGL Canvas Layer -->
+  <div id="canvas-container"></div>
+  <div class="notebook-lines-overlay"></div>
+
+  <!-- Start / Pause Instructions Modal (Drafting Notebook Theme) -->
+  <div id="instructions-modal">
+    <div class="instructions-card">
+      <div class="instructions-title">SPIDER-MAN: INK SKETCH</div>
+      <div class="instructions-subtitle">FIRST-PERSON BALLPOINT BLUEPRINT FPS</div>
+
+      <div class="controls-grid">
+        <div><span class="key-badge">W A S D</span> Move / Pump Swing</div>
+        <div><span class="key-badge">SPACE</span> Jump / Slingshot Boost</div>
+        <div><span class="key-badge">RIGHT CLICK / E</span> Hold to Web Swing</div>
+        <div><span class="key-badge">F</span> Web Zip to Target</div>
+        <div><span class="key-badge">LEFT CLICK / V</span> Fire Weapon</div>
+        <div><span class="key-badge">Q / MMB</span> Aim Down Sights / Scope</div>
+        <div><span class="key-badge">1 2 3 / Wheel</span> Pistol / SMG / Sniper</div>
+        <div><span class="key-badge">SHIFT / CTRL</span> Reel In / Let Out Rope</div>
+        <div><span class="key-badge">R</span> Reload / Restart</div>
+      </div>
+
+      <div style="margin-bottom: 24px; font-size: 15px; font-weight: 700; color: var(--ink-red); background: rgba(214, 48, 49, 0.08); padding: 10px 16px; border: 1px dashed var(--ink-red); border-radius: 4px;">
+        ⚠️ COMBAT RULE: The PISTOL is the ONLY weapon fireable while swinging! Aerial combat = Pistol. Ground combat = SMG & Scoped Sniper!
+      </div>
+
+      <button id="play-button" class="play-prompt-btn">ENTER BLUEPRINT CITY & PLAY</button>
+    </div>
+  </div>
+
+  <script type="module" src="/src/main.ts"></script>
+</body>
+</html>

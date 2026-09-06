@@ -1,0 +1,826 @@
+import * as THREE from 'three';
+import { Enemy, EnemyType, ProjectileSpawnRequest } from './Enemy';
+import { ThugEnemy } from './ThugEnemy';
+import { SniperEnemy } from './SniperEnemy';
+import { DroneEnemy } from './DroneEnemy';
+import { Player } from '../player/Player';
+import { FireResult } from '../weapons/BaseWeapon';
+import { InkParticles } from '../effects/InkParticles';
+import { soundManager } from '../core/SoundManager';
+
+export interface EnemyProjectile {
+  id: string;
+  position: THREE.Vector3;
+  velocity: THREE.Vector3;
+  damage: number;
+  radius: number;
+  traveled: number;
+  maxDistance: number;
+  mesh: THREE.Mesh;
+  isSniper: boolean;
+  kind: EnemyType;
+}
+
+export interface KillEvent {
+  enemyId: string;
+  enemyType: EnemyType;
+  position: THREE.Vector3;
+  isHeadshot: boolean;
+  isSwinging: boolean;
+  distance: number;
+  scoreAwarded: number;
+  xpAwarded: number;
+  comboMultiplier: number;
+  wave: number;
+  killStreak: number;
+}
+
+export interface HitReport {
+  enemy: Enemy;
+  damageDealt: number;
+  isHeadshot: boolean;
+  killed: boolean;
+  killEvent?: KillEvent;
+}
+
+export interface SpawnNode {
+  position: THREE.Vector3;
+  allowedTypes: EnemyType[];
+  floorName: string;
+  waypoints?: THREE.Vector3[];
+}
+
+/**
+ * Manages wave spawning, active enemies, enemy projectiles,
+ * bullet hit detection, score/combo calculation, and wave progression.
+ */
+export class EnemyManager {
+  public scene: THREE.Scene;
+  public particles: InkParticles;
+  public collidableMeshes: THREE.Mesh[] = [];
+
+  // Active enemies & projectiles
+  public enemies: Enemy[] = [];
+  public projectiles: EnemyProjectile[] = [];
+  private projectileGroup: THREE.Group = new THREE.Group();
+
+  // Wave state
+  public currentWave: number = 0;
+  public enemiesLeft: number = 0;
+  public totalEnemiesInWave: number = 0;
+  public waveInProgress: boolean = false;
+  public intermissionTimer: number = 0;
+  public readonly intermissionDuration: number = 3.5;
+
+  // Combo & scoring state
+  public totalScore: number = 0;
+  public totalKills: number = 0;
+  public killStreak: number = 0;
+  public streakTimer: number = 0;
+  private readonly streakExpiry: number = 4.0;
+
+  // Event callbacks
+  public onKill?: (event: KillEvent) => void;
+  public onWaveStart?: (wave: number, totalEnemies: number) => void;
+  public onWaveComplete?: (wave: number) => void;
+  // Fired whenever an enemy projectile damages the player (HUD direction indicator)
+  public onPlayerDamaged?: (fromPos: THREE.Vector3) => void;
+
+  // Recap of the killing blow for the death screen (null until player dies)
+  public lastPlayerDeath: string | null = null;
+
+  // Designated spawn nodes across the construction site floors and rooftops
+  public spawnNodes: SpawnNode[] = [];
+
+  // Shared projectile resources
+  private bulletMaterial: THREE.MeshBasicMaterial;
+  private sniperBulletMaterial: THREE.MeshBasicMaterial;
+  private bulletGeometry: THREE.BufferGeometry;
+  private sniperGeometry: THREE.BufferGeometry;
+
+  // Raycaster for projectile wall collision
+  private projectileRaycaster: THREE.Raycaster = new THREE.Raycaster();
+  private tmpPrev: THREE.Vector3 = new THREE.Vector3();
+  private tmpStep: THREE.Vector3 = new THREE.Vector3();
+  private nearMeshes: THREE.Mesh[] = [];
+
+  constructor(scene: THREE.Scene, particles: InkParticles, collidableMeshes: THREE.Mesh[] = []) {
+    this.scene = scene;
+    this.particles = particles;
+    this.collidableMeshes = collidableMeshes;
+
+    this.projectileGroup.name = 'EnemyProjectiles';
+    this.scene.add(this.projectileGroup);
+
+    // Initialize projectile visuals (red sketch ink)
+    this.bulletMaterial = new THREE.MeshBasicMaterial({ color: 0xd63031 });
+    this.sniperBulletMaterial = new THREE.MeshBasicMaterial({ color: 0xff2222 });
+
+    const bGeom = new THREE.CylinderGeometry(0.045, 0.045, 0.45, 6);
+    bGeom.rotateX(Math.PI * 0.5);
+    this.bulletGeometry = bGeom;
+
+    const sGeom = new THREE.CylinderGeometry(0.065, 0.065, 1.4, 6);
+    sGeom.rotateX(Math.PI * 0.5);
+    this.sniperGeometry = sGeom;
+
+    this.initSpawnNodes();
+  }
+
+  /**
+   * Initializes tactical spawn nodes across construction site floors, catwalks, cranes, and airspace
+   */
+  private initSpawnNodes(): void {
+    // Floor 0 (Ground Foundation Y = 0.5)
+    this.spawnNodes.push(
+      {
+        position: new THREE.Vector3(-8.0, 0.5, 4.0),
+        allowedTypes: ['thug'],
+        floorName: 'Ground Floor',
+        waypoints: [
+          new THREE.Vector3(-8.0, 0.5, 4.0),
+          new THREE.Vector3(-2.0, 0.5, 4.0),
+          new THREE.Vector3(-2.0, 0.5, 8.0),
+          new THREE.Vector3(-8.0, 0.5, 8.0)
+        ]
+      },
+      {
+        position: new THREE.Vector3(6.0, 0.5, -4.0),
+        allowedTypes: ['thug'],
+        floorName: 'Ground Floor',
+        waypoints: [
+          new THREE.Vector3(6.0, 0.5, -4.0),
+          new THREE.Vector3(10.0, 0.5, -4.0),
+          new THREE.Vector3(10.0, 0.5, 2.0),
+          new THREE.Vector3(6.0, 0.5, 2.0)
+        ]
+      },
+      {
+        position: new THREE.Vector3(-6.0, 0.5, -7.0),
+        allowedTypes: ['thug'],
+        floorName: 'Ground Floor',
+        waypoints: [
+          new THREE.Vector3(-6.0, 0.5, -7.0),
+          new THREE.Vector3(0.0, 0.5, -7.0),
+          new THREE.Vector3(0.0, 0.5, -3.0),
+          new THREE.Vector3(-6.0, 0.5, -3.0)
+        ]
+      }
+    );
+
+    // Floor 1 (Y = 5.5)
+    this.spawnNodes.push(
+      {
+        position: new THREE.Vector3(-6.0, 5.5, 4.0),
+        allowedTypes: ['thug'],
+        floorName: 'Level 1',
+        waypoints: [
+          new THREE.Vector3(-6.0, 5.5, 4.0),
+          new THREE.Vector3(3.0, 5.5, 4.0),
+          new THREE.Vector3(3.0, 5.5, 8.0),
+          new THREE.Vector3(-6.0, 5.5, 8.0)
+        ]
+      },
+      {
+        position: new THREE.Vector3(4.0, 5.5, -5.0),
+        allowedTypes: ['thug'],
+        floorName: 'Level 1',
+        waypoints: [
+          new THREE.Vector3(4.0, 5.5, -5.0),
+          new THREE.Vector3(10.0, 5.5, -5.0),
+          new THREE.Vector3(10.0, 5.5, -1.0),
+          new THREE.Vector3(4.0, 5.5, -1.0)
+        ]
+      }
+    );
+
+    // Floor 2 (Y = 10.5)
+    this.spawnNodes.push(
+      {
+        position: new THREE.Vector3(-5.0, 10.5, -3.0),
+        allowedTypes: ['thug'],
+        floorName: 'Level 2',
+        waypoints: [
+          new THREE.Vector3(-5.0, 10.5, -3.0),
+          new THREE.Vector3(2.0, 10.5, -3.0),
+          new THREE.Vector3(2.0, 10.5, 3.0),
+          new THREE.Vector3(-5.0, 10.5, 3.0)
+        ]
+      },
+      {
+        position: new THREE.Vector3(4.0, 10.5, 5.0),
+        allowedTypes: ['thug'],
+        floorName: 'Level 2',
+        waypoints: [
+          new THREE.Vector3(4.0, 10.5, 5.0),
+          new THREE.Vector3(9.0, 10.5, 5.0),
+          new THREE.Vector3(9.0, 10.5, 8.0),
+          new THREE.Vector3(4.0, 10.5, 8.0)
+        ]
+      }
+    );
+
+    // Floor 3 & Skybridge (Y = 15.5)
+    this.spawnNodes.push(
+      {
+        position: new THREE.Vector3(-6.0, 15.5, 0.0),
+        allowedTypes: ['thug'],
+        floorName: 'Level 3 Slab',
+        waypoints: [
+          new THREE.Vector3(-6.0, 15.5, -4.0),
+          new THREE.Vector3(2.0, 15.5, -4.0),
+          new THREE.Vector3(2.0, 15.5, 4.0),
+          new THREE.Vector3(-6.0, 15.5, 4.0)
+        ]
+      },
+      {
+        position: new THREE.Vector3(-22.0, 15.5, 0.0),
+        allowedTypes: ['thug'],
+        floorName: 'Skybridge Catwalk',
+        waypoints: [
+          new THREE.Vector3(-15.0, 15.5, 0.0),
+          new THREE.Vector3(-30.0, 15.5, 0.0)
+        ]
+      }
+    );
+
+    // Roof (Y = 20.5)
+    this.spawnNodes.push(
+      {
+        position: new THREE.Vector3(-7.0, 20.5, 5.0),
+        allowedTypes: ['thug'],
+        floorName: 'Rooftop',
+        waypoints: [
+          new THREE.Vector3(-7.0, 20.5, 5.0),
+          new THREE.Vector3(0.0, 20.5, 5.0),
+          new THREE.Vector3(0.0, 20.5, -4.0),
+          new THREE.Vector3(-7.0, 20.5, -4.0)
+        ]
+      },
+      {
+        position: new THREE.Vector3(6.0, 20.5, -5.0),
+        allowedTypes: ['thug'],
+        floorName: 'Rooftop',
+        waypoints: [
+          new THREE.Vector3(6.0, 20.5, -5.0),
+          new THREE.Vector3(10.0, 20.5, -5.0),
+          new THREE.Vector3(10.0, 20.5, 4.0),
+          new THREE.Vector3(6.0, 20.5, 4.0)
+        ]
+      }
+    );
+
+    // High Perch Sniper Vantage Points
+    this.spawnNodes.push(
+      {
+        position: new THREE.Vector3(-11.0, 21.5, -2.0),
+        allowedTypes: ['sniper'],
+        floorName: 'Crane Counterweight'
+      },
+      {
+        position: new THREE.Vector3(17.0, 46.0, -2.0),
+        allowedTypes: ['sniper'],
+        floorName: 'Crane Jib Walkway'
+      },
+      {
+        position: new THREE.Vector3(-33.0, 16.5, 0.0),
+        allowedTypes: ['sniper'],
+        floorName: 'Skybridge Far Perch'
+      },
+      {
+        position: new THREE.Vector3(-6.0, 15.5, -12.4),
+        allowedTypes: ['sniper'],
+        floorName: 'Scaffolding High Beam'
+      },
+      {
+        position: new THREE.Vector3(6.0, 15.5, -12.4),
+        allowedTypes: ['sniper'],
+        floorName: 'Scaffolding East Beam'
+      }
+    );
+
+    // Drone Aerial Airspace Spawn Rings
+    this.spawnNodes.push(
+      {
+        position: new THREE.Vector3(-22.0, 16.0, 16.0),
+        allowedTypes: ['drone'],
+        floorName: 'West Airspace'
+      },
+      {
+        position: new THREE.Vector3(20.0, 24.0, -18.0),
+        allowedTypes: ['drone'],
+        floorName: 'East Airspace'
+      },
+      {
+        position: new THREE.Vector3(-20.0, 28.0, -16.0),
+        allowedTypes: ['drone'],
+        floorName: 'Northwest Airspace'
+      },
+      {
+        position: new THREE.Vector3(18.0, 35.0, 18.0),
+        allowedTypes: ['drone'],
+        floorName: 'Southeast High Airspace'
+      },
+      {
+        position: new THREE.Vector3(0.0, 42.0, -22.0),
+        allowedTypes: ['drone'],
+        floorName: 'Crane Apex Airspace'
+      }
+    );
+  }
+
+  /**
+   * Wave composition for a given wave number (pure, shared by spawn + preview)
+   */
+  public compositionFor(wave: number): { thugs: number; snipers: number; drones: number } {
+    // Wave composition requirements:
+    // Wave 1: 5 thugs
+    // Wave 2: 7 thugs + 2 drones
+    // Wave 3: 8 thugs + 2 snipers + 3 drones
+    // Wave N+: Escalating difficulty
+    if (wave === 1) {
+      return { thugs: 5, snipers: 0, drones: 0 };
+    } else if (wave === 2) {
+      return { thugs: 7, snipers: 0, drones: 2 };
+    } else if (wave === 3) {
+      return { thugs: 8, snipers: 2, drones: 3 };
+    }
+    // Endless escalating waves
+    return {
+      thugs: 8 + (wave - 3) * 2,
+      snipers: Math.min(2 + Math.floor((wave - 3) / 2), 5),
+      drones: 3 + (wave - 3),
+    };
+  }
+
+  /** Preview of the next wave without spawning (HUD wave-preview row). */
+  public peekNextWave(): { thugs: number; snipers: number; drones: number } {
+    return this.compositionFor(this.currentWave + 1);
+  }
+
+  /**
+   * Starts wave progression or advances to next wave.
+   * Mercy rule: low-HP players (below 30) face one fewer thug (min 1).
+   */
+  public startNextWave(playerHP?: number): void {
+    this.currentWave++;
+    this.waveInProgress = true;
+    this.intermissionTimer = 0;
+
+    const comp = this.compositionFor(this.currentWave);
+    let thugsToSpawn = comp.thugs;
+    const snipersToSpawn = comp.snipers;
+    const dronesToSpawn = comp.drones;
+
+    if (playerHP !== undefined && playerHP < 30 && thugsToSpawn > 1) {
+      thugsToSpawn -= 1;
+    }
+
+    this.spawnWave(thugsToSpawn, snipersToSpawn, dronesToSpawn);
+
+    // Audio fanfare
+    soundManager.playWaveStart(this.currentWave);
+
+    if (this.onWaveStart) {
+      this.onWaveStart(this.currentWave, this.totalEnemiesInWave);
+    }
+  }
+
+  /**
+   * Spawns requested counts of each enemy type at valid nodes
+   */
+  private spawnWave(thugs: number, snipers: number, drones: number): void {
+    const thugNodes = this.spawnNodes.filter((n) => n.allowedTypes.includes('thug'));
+    const sniperNodes = this.spawnNodes.filter((n) => n.allowedTypes.includes('sniper'));
+    const droneNodes = this.spawnNodes.filter((n) => n.allowedTypes.includes('drone'));
+
+    // 1. Spawn Thugs
+    for (let i = 0; i < thugs; i++) {
+      const node = thugNodes[i % thugNodes.length];
+      const offset = new THREE.Vector3(
+        (Math.random() - 0.5) * 2.0,
+        0,
+        (Math.random() - 0.5) * 2.0
+      );
+      const spawnPos = node.position.clone().add(offset);
+      const enemy = new ThugEnemy(spawnPos, node.waypoints);
+      this.addEnemy(enemy);
+    }
+
+    // 2. Spawn Snipers
+    for (let i = 0; i < snipers; i++) {
+      const node = sniperNodes[i % sniperNodes.length];
+      const enemy = new SniperEnemy(node.position.clone());
+      this.addEnemy(enemy);
+    }
+
+    // 3. Spawn Drones
+    for (let i = 0; i < drones; i++) {
+      const node = droneNodes[i % droneNodes.length];
+      const offset = new THREE.Vector3(
+        (Math.random() - 0.5) * 4.0,
+        (Math.random() - 0.5) * 3.0,
+        (Math.random() - 0.5) * 4.0
+      );
+      const spawnPos = node.position.clone().add(offset);
+      const enemy = new DroneEnemy(spawnPos);
+      this.addEnemy(enemy);
+    }
+
+    this.totalEnemiesInWave = this.enemies.length;
+    this.enemiesLeft = this.totalEnemiesInWave;
+  }
+
+  private addEnemy(enemy: Enemy): void {
+    this.enemies.push(enemy);
+    this.scene.add(enemy.group);
+  }
+
+  /**
+   * Returns all collidable meshes from living enemies for raycasting
+   */
+  public getRaycastTargets(): THREE.Object3D[] {
+    const targets: THREE.Object3D[] = [];
+    for (const e of this.enemies) {
+      if (!e.isDead) {
+        targets.push(...e.collidableMeshes);
+      }
+    }
+    return targets;
+  }
+
+  /**
+   * Checks player gunshot hit against all enemies with headshot detection,
+   * stagger application, combo scoring, and kill reporting
+   */
+  public checkBulletHits(
+    fireResult: FireResult,
+    isSwinging: boolean = false,
+    playerPos?: THREE.Vector3
+  ): HitReport | null {
+    if (!fireResult.hit || !fireResult.target) {
+      return null;
+    }
+
+    // Identify target enemy by ascending mesh hierarchy or userData
+    let hitObject: THREE.Object3D | null = fireResult.target;
+    let targetEnemy: Enemy | null = null;
+    let isHeadshotHit = false;
+
+    while (hitObject) {
+      if (hitObject.userData && hitObject.userData.isHead) {
+        isHeadshotHit = true;
+      }
+      if (hitObject.userData && hitObject.userData.enemy instanceof Enemy) {
+        targetEnemy = hitObject.userData.enemy;
+        break;
+      }
+      hitObject = hitObject.parent;
+    }
+
+    // Fallback: check all enemies if hit mesh is in collidableMeshes
+    if (!targetEnemy) {
+      for (const e of this.enemies) {
+        if (e.collidableMeshes.includes(fireResult.target)) {
+          targetEnemy = e;
+          if (fireResult.target === e.headMesh || fireResult.target.userData?.isHead) {
+            isHeadshotHit = true;
+          }
+          break;
+        }
+      }
+    }
+
+    if (!targetEnemy || targetEnemy.isDead) {
+      return null;
+    }
+
+    // Merge headshot flag from weapon calculation
+    const finalHeadshot = isHeadshotHit || fireResult.isHeadshot;
+
+    // Apply damage to enemy
+    const hitPoint = fireResult.point || targetEnemy.group.position.clone();
+    const hitDir = fireResult.ray.direction;
+    const damageResult = targetEnemy.takeDamage(fireResult.damage, finalHeadshot, hitPoint, hitDir);
+
+    // Spawn red ink impact splatter
+    this.particles.spawnEnemyHit(hitPoint, finalHeadshot);
+
+    let killEvent: KillEvent | undefined;
+
+    if (damageResult.killed) {
+      // Enemy disintegrates into ink drops and paper scraps
+      targetEnemy.disintegrate(this.particles);
+
+      // Kill streak tracking
+      this.totalKills++;
+      this.killStreak++;
+      this.streakTimer = this.streakExpiry;
+
+      // Distance calculation
+      const dist = playerPos ? playerPos.distanceTo(targetEnemy.group.position) : fireResult.distance || 10;
+
+      // Score and XP computation with stylish comic combo bonuses
+      let score = targetEnemy.scoreValue;
+      let xp = targetEnemy.xpValue;
+
+      // Headshot bonus (+150 score)
+      if (finalHeadshot) {
+        score += 150;
+        xp += 20;
+      }
+
+      // Aerial swing kill bonus (+250 score - "Air Assassin!")
+      if (isSwinging) {
+        score += 250;
+        xp += 35;
+      }
+
+      // Longshot sniper/distance bonus (+150 score)
+      if (dist > 32.0) {
+        score += 150;
+        xp += 20;
+      }
+
+      // Combo multiplier: scales up to 3.0x on kill streaks
+      const comboMult = 1.0 + Math.min(this.killStreak * 0.25, 2.5);
+      score = Math.round(score * comboMult);
+      this.totalScore += score;
+
+      killEvent = {
+        enemyId: targetEnemy.id,
+        enemyType: targetEnemy.type,
+        position: targetEnemy.group.position.clone(),
+        isHeadshot: finalHeadshot,
+        isSwinging,
+        distance: dist,
+        scoreAwarded: score,
+        xpAwarded: xp,
+        comboMultiplier: comboMult,
+        wave: this.currentWave,
+        killStreak: this.killStreak
+      };
+
+      // Decrement remaining enemy count
+      this.enemiesLeft = Math.max(0, this.enemiesLeft - 1);
+
+      if (this.onKill) {
+        this.onKill(killEvent);
+      }
+
+      // Check wave completion
+      if (this.enemiesLeft === 0 && this.waveInProgress) {
+        this.completeWave();
+      }
+    }
+
+    return {
+      enemy: targetEnemy,
+      damageDealt: damageResult.damageTaken,
+      isHeadshot: finalHeadshot,
+      killed: damageResult.killed,
+      killEvent
+    };
+  }
+
+  /**
+   * Handles wave completion and starts intermission countdown
+   */
+  private completeWave(): void {
+    this.waveInProgress = false;
+    this.intermissionTimer = this.intermissionDuration;
+
+    if (this.onWaveComplete) {
+      this.onWaveComplete(this.currentWave);
+    }
+  }
+
+  /**
+   * Spawns a projectile into the simulation
+   */
+  public spawnProjectile(req: ProjectileSpawnRequest): void {
+    const isSniper = req.isSniper || false;
+    const geom = isSniper ? this.sniperGeometry : this.bulletGeometry;
+    const mat = isSniper ? this.sniperBulletMaterial : this.bulletMaterial;
+
+    const mesh = new THREE.Mesh(geom, mat);
+    mesh.position.copy(req.origin);
+    mesh.lookAt(req.origin.clone().add(req.direction));
+    mesh.castShadow = false;
+    mesh.receiveShadow = false;
+
+    this.projectileGroup.add(mesh);
+
+    this.projectiles.push({
+      id: Math.random().toString(36).substring(2, 9),
+      position: req.origin.clone(),
+      velocity: req.direction.clone().multiplyScalar(req.speed),
+      damage: req.damage,
+      radius: req.radius,
+      traveled: 0,
+      maxDistance: req.maxDistance,
+      mesh,
+      isSniper,
+      kind: req.kind ?? (isSniper ? 'sniper' : 'thug'),
+    });
+  }
+
+  /**
+   * Main per-frame update loop
+   */
+  public update(
+    dt: number,
+    player: Player,
+    camera: THREE.PerspectiveCamera
+  ): void {
+    // 1. Combo streak timer decay
+    if (this.streakTimer > 0) {
+      this.streakTimer -= dt;
+      if (this.streakTimer <= 0) {
+        this.killStreak = 0;
+      }
+    }
+
+    // 2. Wave intermission timer
+    if (!this.waveInProgress && this.intermissionTimer > 0) {
+      this.intermissionTimer -= dt;
+      if (this.intermissionTimer <= 0) {
+        this.startNextWave(player.health);
+      }
+    }
+
+    // 3. Update all living enemies
+    const playerPos = player.position;
+    for (let i = this.enemies.length - 1; i >= 0; i--) {
+      const enemy = this.enemies[i];
+
+      if (enemy.isDead) {
+        // Remove dead enemy from scene after disintegration
+        this.scene.remove(enemy.group);
+        enemy.dispose();
+        this.enemies.splice(i, 1);
+        continue;
+      }
+
+      enemy.waveNumber = this.currentWave;
+      enemy.update(dt, playerPos, camera, this.collidableMeshes);
+
+      // Collect pending projectiles from this enemy
+      while (enemy.pendingProjectiles.length > 0) {
+        const req = enemy.pendingProjectiles.shift()!;
+        this.spawnProjectile(req);
+      }
+    }
+
+    // 4. Update and resolve enemy projectiles
+    this.updateProjectiles(dt, player, camera);
+  }
+
+  private tmpFwd: THREE.Vector3 = new THREE.Vector3();
+  private tmpRight: THREE.Vector3 = new THREE.Vector3();
+  private tmpDir: THREE.Vector3 = new THREE.Vector3();
+  private static readonly UP: THREE.Vector3 = new THREE.Vector3(0, 1, 0);
+
+  /**
+   * Advances projectiles, checks player hitboxes, and handles architecture collisions
+   */
+  private updateProjectiles(dt: number, player: Player, camera?: THREE.PerspectiveCamera): void {
+    const playerPos = player.position;
+    const playerRadius = 0.65;
+    const playerMinY = playerPos.y - 0.3;
+    const playerMaxY = playerPos.y + 1.9;
+
+    for (let i = this.projectiles.length - 1; i >= 0; i--) {
+      const proj = this.projectiles[i];
+      this.tmpPrev.copy(proj.position);
+      this.tmpStep.copy(proj.velocity).multiplyScalar(dt);
+      const stepLength = this.tmpStep.length();
+
+      proj.position.add(this.tmpStep);
+      proj.traveled += stepLength;
+      proj.mesh.position.copy(proj.position);
+
+      // Check max distance expiry
+      if (proj.traveled >= proj.maxDistance) {
+        this.removeProjectile(i);
+        continue;
+      }
+
+      // Check collision against Player (skip while dead)
+      if (!player.isDead) {
+        const dx = proj.position.x - playerPos.x;
+        const dz = proj.position.z - playerPos.z;
+        const horizDist = Math.hypot(dx, dz);
+        const isWithinPlayerHeight = proj.position.y >= playerMinY && proj.position.y <= playerMaxY;
+
+      if (horizDist <= (playerRadius + proj.radius) && isWithinPlayerHeight) {
+        const wasAlive = !player.isDead;
+        player.takeDamage(proj.damage);
+        if (this.onPlayerDamaged) this.onPlayerDamaged(proj.position);
+        this.particles.spawnEnemyHit(proj.position, false);
+        soundManager.playImpactWall();
+        if (wasAlive && player.isDead) {
+          this.lastPlayerDeath = this.describeKiller(proj, player, camera);
+        }
+        this.removeProjectile(i);
+        continue;
+      }
+      }
+
+      // Check collision against architecture (broadphase: only nearby meshes)
+      if (this.collidableMeshes.length > 0 && stepLength > 0.001) {
+        this.tmpStep.normalize();
+        this.projectileRaycaster.set(this.tmpPrev, this.tmpStep);
+        this.projectileRaycaster.far = stepLength;
+
+        this.nearMeshes.length = 0;
+        for (let m = 0; m < this.collidableMeshes.length; m++) {
+          const mesh = this.collidableMeshes[m];
+          const mx = mesh.position.x - proj.position.x;
+          const mz = mesh.position.z - proj.position.z;
+          if (mx * mx + mz * mz > 900) continue;
+          if (Math.abs(mesh.position.y - proj.position.y) > 60) continue;
+          this.nearMeshes.push(mesh);
+        }
+        if (this.nearMeshes.length === 0) continue;
+
+        const hits = this.projectileRaycaster.intersectObjects(this.nearMeshes, false);
+        if (hits.length > 0) {
+          const hit = hits[0];
+          const normal = hit.face ? hit.face.normal.clone().transformDirection(hit.object.matrixWorld) : new THREE.Vector3(0, 1, 0);
+          this.particles.spawnWallImpact(hit.point, normal);
+          soundManager.playImpactWall();
+          this.removeProjectile(i);
+          continue;
+        }
+      }
+    }
+  }
+
+  /**
+   * One-line killer recap for the death screen, e.g. "SNIPER · 42m · BEHIND".
+   */
+  private describeKiller(proj: EnemyProjectile, player: Player, camera?: THREE.PerspectiveCamera): string {
+    const dist = Math.round(proj.position.distanceTo(player.position));
+    let where = 'AHEAD';
+    if (camera) {
+      this.tmpDir.copy(proj.position).sub(player.position);
+      this.tmpDir.y = 0;
+      if (this.tmpDir.lengthSq() > 0.01) {
+        this.tmpDir.normalize();
+        this.tmpFwd.set(0, 0, -1).applyQuaternion(camera.quaternion);
+        this.tmpFwd.y = 0;
+        this.tmpFwd.normalize();
+        this.tmpRight.crossVectors(this.tmpFwd, EnemyManager.UP).normalize();
+        const f = this.tmpDir.dot(this.tmpFwd);
+        const r = this.tmpDir.dot(this.tmpRight);
+        const ang = Math.atan2(r, f) * (180 / Math.PI);
+        const a = Math.abs(ang);
+        if (a > 135) where = 'BEHIND';
+        else if (a > 45) where = ang > 0 ? 'RIGHT' : 'LEFT';
+      }
+    }
+    return `${proj.kind.toUpperCase()} · ${dist}m · ${where}`;
+  }
+
+  private removeProjectile(index: number): void {
+    const proj = this.projectiles[index];
+    this.projectileGroup.remove(proj.mesh);
+    this.projectiles.splice(index, 1);
+  }
+
+  /**
+   * Resets all enemies and waves
+   */
+  public clear(): void {
+    for (const enemy of this.enemies) {
+      this.scene.remove(enemy.group);
+      enemy.dispose();
+    }
+    this.enemies = [];
+
+    for (const proj of this.projectiles) {
+      this.projectileGroup.remove(proj.mesh);
+    }
+    this.projectiles = [];
+
+    this.currentWave = 0;
+    this.enemiesLeft = 0;
+    this.totalEnemiesInWave = 0;
+    this.waveInProgress = false;
+    this.intermissionTimer = 0;
+    this.totalScore = 0;
+    this.totalKills = 0;
+    this.killStreak = 0;
+    this.lastPlayerDeath = null;
+  }
+
+  public dispose(): void {
+    this.clear();
+    this.scene.remove(this.projectileGroup);
+    this.bulletGeometry.dispose();
+    this.sniperGeometry.dispose();
+    this.bulletMaterial.dispose();
+    this.sniperBulletMaterial.dispose();
+  }
+}
