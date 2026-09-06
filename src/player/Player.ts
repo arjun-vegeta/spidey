@@ -47,6 +47,10 @@ export class Player {
   public airTime: number = 0;
   public landingDip: number = 0;
 
+  // Scope breath: hold Shift to steady, 3s lungs
+  private breathLeft: number = 3.0;
+  private swayTime: number = 0;
+
   // Temporary vectors (reused to avoid per-frame allocation)
   private _tempVec: THREE.Vector3 = new THREE.Vector3();
   private _tempVec2: THREE.Vector3 = new THREE.Vector3();
@@ -74,8 +78,8 @@ export class Player {
     this.camera.add(this.arms.armsGroup);
     this.camera.add(this.weaponManager.weaponContainer);
 
-    // Initial spawn at construction site ground/lower level
-    this.physics.position.copy(Player.SPAWN);
+    // Initial spawn shares the single reset path (no triple init drift)
+    this.reset();
   }
 
   /** Position camera for menu-background / first-frame render before Play. */
@@ -132,6 +136,13 @@ export class Player {
     this.pitch += (Math.random() - 0.5) * 0.08;
     this.yaw += (Math.random() - 0.5) * 0.08;
 
+    // Unscope the sniper when hurt (no scope-camping through trades)
+    const activeNow = this.weaponManager.activeWeapon;
+    if (activeNow.type === 'sniper' && (activeNow as Sniper).isScoped) {
+      (activeNow as Sniper).isScoped = false;
+      this.weaponManager.aimProgress = 0;
+    }
+
     if (this.health <= 0) {
       this.isDead = true;
       soundManager.playEnemyDeath();
@@ -143,7 +154,7 @@ export class Player {
     this.health = Math.min(this.maxHealth, this.health + amount);
   }
 
-  public update(dt: number, collidables: THREE.Object3D[], combatTargets?: THREE.Object3D[]): FireResult | null {
+  public update(dt: number, collidables: THREE.Object3D[], combatTargets?: THREE.Object3D[], webAnchors?: THREE.Vector3[]): FireResult | null {
     if (this.isDead) return null;
 
     if (this.invulnerabilityTimer > 0) {
@@ -170,8 +181,24 @@ export class Player {
       : (this.input.isMovingLeft() ? 0.025 : (this.input.isMovingRight() ? -0.025 : 0));
     this.cameraRoll = THREE.MathUtils.lerp(this.cameraRoll, targetRoll, dt * 8.0);
 
-    // Apply camera rotation: Yaw -> Pitch -> Roll
-    this._euler.set(this.pitch, this.yaw, this.cameraRoll);
+    // Apply camera rotation: Yaw -> Pitch -> Roll (scope sway rides the euler only)
+    let swayY = 0;
+    let swayP = 0;
+    const scopeWep = this.weaponManager.activeWeapon;
+    const scopedNow = scopeWep.type === 'sniper' && (scopeWep as Sniper).isScoped;
+    if (scopedNow) {
+      this.swayTime += dt;
+      const steadying = this.input.isReelingIn() && this.breathLeft > 0;
+      if (steadying) this.breathLeft = Math.max(0, this.breathLeft - dt);
+      else this.breathLeft = Math.min(3, this.breathLeft + dt * 0.8);
+      if (!steadying || this.breathLeft <= 0) {
+        swayY = Math.sin(this.swayTime * 1.3) * 0.004 + Math.sin(this.swayTime * 2.9) * 0.0015;
+        swayP = Math.cos(this.swayTime * 1.7) * 0.003;
+      }
+    } else {
+      this.breathLeft = Math.min(3, this.breathLeft + dt * 2);
+    }
+    this._euler.set(this.pitch + swayP, this.yaw + swayY, this.cameraRoll);
     this.camera.quaternion.setFromEuler(this._euler);
 
     // 2. Movement direction vectors in camera horizontal plane
@@ -190,10 +217,11 @@ export class Player {
     if (this.input.isMovingRight()) inputDir.add(rightFlat);
     if (this.input.isMovingLeft()) inputDir.sub(rightFlat);
     if (inputDir.lengthSq() > 0.01) inputDir.normalize();
+    const isMoving = inputDir.lengthSq() > 0.01;
 
     // 3. Web-Slinging Actions
-    // Scan for potential anchors ahead (forgiving cone + height bias)
-    this.webShooter.scanForTargets(this.camera, collidables, this.physics.position);
+    // Scan for potential anchors ahead (forgiving cone + height bias + latch magnet)
+    this.webShooter.scanForTargets(this.camera, collidables, this.physics.position, webAnchors);
 
     // Web attach (Hold right-click or E)
     if (this.input.webJustPressed) {
@@ -224,9 +252,11 @@ export class Player {
       }
     }
 
-    // 4. Update Physics Simulation
+    // 4. Update Physics Simulation (ADS slows feet on the ground: commitment)
     const wasGrounded = this.physics.isGrounded;
     const fallSpeedBefore = this.physics.velocity.y;
+    const wantAimSlow = this.input.isZoomHolding() && !this.isSwinging && this.physics.isGrounded;
+    this.physics.speedMultiplier = wantAimSlow ? 0.6 : 1.0;
     const isReelingIn = this.input.isReelingIn();
     const isReelingOut = this.input.isReelingOut();
     this.physics.update(dt, inputDir, forward, isReelingIn, isReelingOut);
@@ -302,11 +332,13 @@ export class Player {
       const shootDir = this._tempVec2.copy(forward);
 
       const targets = combatTargets ?? collidables;
-      fireResult = this.weaponManager.fire(now, shootOrigin, shootDir, this.isSwinging, targets);
+      fireResult = this.weaponManager.fire(now, shootOrigin, shootDir, this.isSwinging, targets, {
+        moving: isMoving,
+        aiming: this.input.isZoomHolding() && !this.isSwinging,
+      });
     }
 
     // 10. Update Weapon & Arm Animations
-    const isMoving = inputDir.lengthSq() > 0.01;
     this.weaponManager.update(dt, this.isSwinging, isAiming, isMoving, currentSpeed);
 
     // Arms follow web anchor

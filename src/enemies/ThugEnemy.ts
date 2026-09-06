@@ -41,6 +41,9 @@ export class ThugEnemy extends Enemy {
   private losClear: boolean = true;
   // Pre-burst aim pause: 0.4s gun-raise warning before the first bullet
   private aimPause: number = 0;
+  private aimArmed: boolean = false;
+  // Thugs never leave their floor (no stair climbing, no knockback lift)
+  private homeFloorY: number = 0;
 
   constructor(position: THREE.Vector3, customWaypoints?: THREE.Vector3[]) {
     // 90 HP: dies to 1 sniper headshot (300) or 4 pistol shots (112)
@@ -48,6 +51,7 @@ export class ThugEnemy extends Enemy {
     this.scoreValue = 100;
     this.xpValue = 25;
     this.eyeHeight = 1.65;
+    this.homeFloorY = position.y;
 
     // Setup waypoints
     if (customWaypoints && customWaypoints.length > 0) {
@@ -162,6 +166,8 @@ export class ThugEnemy extends Enemy {
 
   protected updateAI(dt: number, playerPos: THREE.Vector3, _collidables: THREE.Mesh[]): void {
     const myPos = this.group.position;
+    // Floor clamp first: stagger impulses and drift never change levels
+    myPos.y = this.homeFloorY;
     const distToPlayer = myPos.distanceTo(playerPos);
     const yDiff = Math.abs(myPos.y - playerPos.y);
 
@@ -236,10 +242,10 @@ export class ThugEnemy extends Enemy {
    * Handles 3-round burst weapon cycle (throttled LOS so thugs don't shoot through walls)
    */
   private updateBurstFiring(dt: number, playerPos: THREE.Vector3, collidables: THREE.Mesh[], _myPos: THREE.Vector3): void {
-    if (this.burstCooldownTimer > 0) {
-      this.burstCooldownTimer -= dt;
-      return;
-    }
+    // Cooldown runs even during grace so the first burst lands ~1.9s after spawn, not 2.5s+
+    if (this.burstCooldownTimer > 0) this.burstCooldownTimer -= dt;
+    if (this.spawnGrace > 0) return;
+    if (this.burstCooldownTimer > 0) return;
 
     // Throttled line-of-sight: don't waste bullets through concrete
     this.losTimer -= dt;
@@ -258,8 +264,10 @@ export class ThugEnemy extends Enemy {
     }
     if (!this.losClear) return;
 
-    // Fresh burst starts with a readable 0.4s aim pause (gun-raise click)
-    if (this.burstIndex === 0 && this.aimPause <= 0 && this.burstIntervalTimer <= 0) {
+    // Fresh burst starts with a readable 0.4s aim pause (gun-raise click).
+    // Armed once per burst: without the flag the expiry re-triggers the pause forever.
+    if (this.burstIndex === 0 && !this.aimArmed && this.burstIntervalTimer <= 0) {
+      this.aimArmed = true;
       this.aimPause = 0.4;
       this.gunGroup.position.z += 0.1;
       soundManager.playThugAimClick();
@@ -279,6 +287,7 @@ export class ThugEnemy extends Enemy {
       if (this.burstIndex >= this.burstCount) {
         // Burst finished, reset cooldown
         this.burstIndex = 0;
+        this.aimArmed = false;
         this.burstCooldownTimer = this.burstCooldown + (Math.random() - 0.5) * 0.4;
       }
     }

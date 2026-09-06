@@ -47,6 +47,9 @@ export class CityBuilder {
   private elapsed: number = 0;
   private worldCollider: WorldCollider | null = null;
   private mapBuildingList: Array<{ x: number; z: number; w: number; d: number }> = [];
+  private balconySpecs: Array<{ cx: number; cy: number; cz: number; hw: number; hd: number; nx: number; nz: number }> = [];
+  private glintMat: THREE.MeshBasicMaterial | null = null;
+  private glintGeom: THREE.OctahedronGeometry | null = null;
 
   // Shared ink materials
   private facadeMat: THREE.ShaderMaterial;
@@ -562,6 +565,20 @@ export class CityBuilder {
       }
     }
 
+    // Balcony shells: standable floors + leanable outer rails
+    for (const b of this.balconySpecs) {
+      coll.addBoxCoords(b.cx - b.hw, b.cy - 0.3, b.cz - b.hd, b.cx + b.hw, b.cy, b.cz + b.hd, 'floor');
+      // Outer rail strip (1.1m tall, thin, on the outward edge)
+      const t = 0.15;
+      if (b.nx !== 0) {
+        const rx = b.nx > 0 ? b.cx + b.hw - t : b.cx - b.hw;
+        coll.addBoxCoords(Math.min(rx, rx + t), b.cy, b.cz - b.hd, Math.max(rx, rx + t), b.cy + 1.1, b.cz + b.hd, 'wall');
+      } else {
+        const rz = b.nz > 0 ? b.cz + b.hd - t : b.cz - b.hd;
+        coll.addBoxCoords(b.cx - b.hw, b.cy, Math.min(rz, rz + t), b.cx + b.hw, b.cy + 1.1, Math.max(rz, rz + t), 'wall');
+      }
+    }
+
     coll.finalize();
     this.worldCollider = coll;
   }
@@ -695,7 +712,100 @@ export class CityBuilder {
       this.buildTerracePerimeterRailing(bGroup, roofW, roofD, roofY);
     }
 
+    // 5. Balconies on tall monolithic faces (landing pads with rails + latches)
+    const tiered = setbackHeight !== undefined && setbackScale !== undefined && setbackHeight < height;
+    if (!tiered && height >= 42) {
+      this.buildBalconies(bGroup, config);
+    }
+
     parent.add(bGroup);
+  }
+
+  /**
+   * Balcony modules on the face toward the city center, every 18m up to 3 per tower.
+   * Each balcony: standable slab, 3-sided railing, corner latch anchors with glints,
+   * and collision shells (floor to stand, outer rail to lean on).
+   */
+  private buildBalconies(parent: THREE.Group, config: SkyscraperConfig): void {
+    // Face toward the map center on the dominant axis
+    let nx = 0;
+    let nz = 0;
+    if (Math.abs(config.x) >= Math.abs(config.z)) {
+      nx = config.x > 0 ? -1 : 1;
+    } else {
+      nz = config.z > 0 ? -1 : 1;
+    }
+    if (nx === 0 && nz === 0) nz = -1;
+
+    const hw = config.width / 2;
+    const hd = config.depth / 2;
+    const alongW = 5.0;   // platform width along the face
+    const outD = 2.2;     // platform depth outward
+    const railH = 1.1;
+    const railT = 0.12;
+
+    let placed = 0;
+    for (let y = 18; y < config.height - 6 && placed < 3; y += 18) {
+      placed++;
+      const cx = nx * (hw + outD / 2);
+      const cz = nz * (hd + outD / 2);
+      const sillY = y - 0.15;
+
+      // Slab (blocks bullets = cover, stands players via shell below)
+      const slabGeom = new THREE.BoxGeometry(nx !== 0 ? outD : alongW, 0.3, nx !== 0 ? alongW : outD);
+      const slab = this.addMeshWithEdges(parent, slabGeom, this.roofMat, InkShaderMaterial.defaultInkColor, true);
+      slab.position.set(cx, sillY, cz);
+
+      // Outer railing + two side rails (visual + bullet cover)
+      const outerLen = alongW;
+      const outerGeom = new THREE.BoxGeometry(nx !== 0 ? railT : outerLen, railH, nx !== 0 ? outerLen : railT);
+      const outer = this.addMeshWithEdges(parent, outerGeom, this.metalMat, InkShaderMaterial.defaultInkColor, true);
+      outer.position.set(cx + nx * (outD / 2 - railT / 2), y + railH / 2, cz + nz * (outD / 2 - railT / 2));
+
+      const sideLen = outD - railT;
+      const sideGeom = new THREE.BoxGeometry(nx !== 0 ? sideLen : railT, railH, nx !== 0 ? railT : sideLen);
+      for (const s of [-1, 1]) {
+        const tx = -nz; // tangent along face
+        const tz = nx;
+        const side = this.addMeshWithEdges(parent, sideGeom, this.metalMat, InkShaderMaterial.defaultInkColor, true);
+        side.position.set(
+          cx + tx * s * (alongW / 2 - railT / 2),
+          y + railH / 2,
+          cz + tz * s * (alongW / 2 - railT / 2)
+        );
+      }
+
+      // Corner latch anchors with ink glints (preferential web targets)
+      const tx2 = -nz;
+      const tz2 = nx;
+      for (const s of [-1, 1]) {
+        const lx = config.x + cx + tx2 * s * (alongW / 2) + nx * (outD / 2);
+        const lz = config.z + cz + tz2 * s * (alongW / 2) + nz * (outD / 2);
+        const anchor = new THREE.Vector3(lx, y + 1.3, lz);
+        this.webAnchors.push(anchor);
+        this.addLatchGlint(parent, lx - config.x, y + 1.3, lz - config.z);
+      }
+
+      // Collision shells: standable floor + leanable outer rail
+      this.balconySpecs.push({
+        cx: config.x + cx, cy: y, cz: config.z + cz,
+        hw: nx !== 0 ? outD / 2 : alongW / 2,
+        hd: nx !== 0 ? alongW / 2 : outD / 2,
+        nx, nz,
+      });
+    }
+  }
+
+  /** Small red ink diamond marking a curated latch point. Never raycastable. */
+  private addLatchGlint(parent: THREE.Group, lx: number, ly: number, lz: number): void {
+    if (!this.glintMat) {
+      this.glintMat = new THREE.MeshBasicMaterial({ color: 0xd63031, toneMapped: false });
+      this.glintGeom = new THREE.OctahedronGeometry(0.22);
+    }
+    const glint = new THREE.Mesh(this.glintGeom as THREE.BufferGeometry, this.glintMat);
+    glint.position.set(lx, ly, lz);
+    glint.raycast = () => {};
+    parent.add(glint);
   }
 
   /**

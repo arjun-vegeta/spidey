@@ -230,9 +230,15 @@ export class SniperEnemy extends Enemy {
       }
     }
 
+    // Spawn grace: track but never shoot during sketch-in (cooldown runs under it)
+    if (this.shotCooldownTimer > 0) this.shotCooldownTimer -= dt;
+    if (this.spawnGrace > 0) {
+      this.cancelAim();
+      return;
+    }
+
     // Check shot cooldown
     if (this.shotCooldownTimer > 0) {
-      this.shotCooldownTimer -= dt;
       this.cancelAim();
       return;
     }

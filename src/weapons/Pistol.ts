@@ -122,6 +122,10 @@ export class Pistol extends BaseWeapon {
     frontSight.position.set(0, 0.078, -0.14);
     this.modelGroup.add(frontSight);
 
+    // Muzzle socket at barrel crown for flash + tracer origin
+    this.muzzleTip.position.set(0, 0.042, -0.22);
+    this.modelGroup.add(this.muzzleTip);
+
     this.modelGroup.scale.set(1.15, 1.15, 1.15);
   }
 }

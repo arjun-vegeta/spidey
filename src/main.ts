@@ -58,7 +58,7 @@ window.addEventListener('DOMContentLoaded', () => {
       soundManager.toggleMute();
     }
     if (e.key === 'n' || e.key === 'N') {
-      game.hud.setMinimapVisible(!game.hud.minimapVisible);
+      game.toggleMinimap();
     }
   });
 });

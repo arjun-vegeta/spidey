@@ -214,7 +214,7 @@ export class DroneEnemy extends Enemy {
       }
     } else {
       this.attackCooldownTimer -= dt;
-      if (this.attackCooldownTimer <= 0 && distToPlayer < 32.0) {
+      if (this.attackCooldownTimer <= 0 && distToPlayer < 32.0 && this.spawnGrace <= 0) {
         this.telegraphTimer = 0.5;
         soundManager.playPredive();
       }

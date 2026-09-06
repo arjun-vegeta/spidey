@@ -11,6 +11,11 @@ export interface FireResult {
   ray: THREE.Ray;
 }
 
+export interface FireOptions {
+  moving?: boolean;
+  aiming?: boolean;
+}
+
 export abstract class BaseWeapon {
   public abstract readonly name: string;
   public abstract readonly type: 'pistol' | 'smg' | 'sniper';
@@ -35,7 +40,19 @@ export abstract class BaseWeapon {
   // Visual 3D model container
   public modelGroup: THREE.Group = new THREE.Group();
 
+  // Barrel-tip socket: muzzle flash + tracer origin. Subclasses place it.
+  public muzzleTip: THREE.Object3D = new THREE.Object3D();
+
   constructor() {}
+
+  /** Effective spread in radians for a body state. ADS tightens, motion widens. */
+  public spreadFor(moving: boolean, aiming: boolean, swinging: boolean): number {
+    let s = this.spread;
+    if (aiming) s *= 0.55;
+    if (moving) s *= 1.6;
+    if (swinging) s *= 1.25;
+    return s;
+  }
 
   public initAmmo(): void {
     this.currentAmmo = this.magazineSize;
@@ -60,16 +77,18 @@ export abstract class BaseWeapon {
     origin: THREE.Vector3,
     direction: THREE.Vector3,
     isSwinging: boolean,
-    raycastTargets: THREE.Object3D[]
+    raycastTargets: THREE.Object3D[],
+    opts?: FireOptions
   ): FireResult | null {
     if (!this.canFire(currentTime, isSwinging)) return null;
 
     this.currentAmmo--;
     this.lastFireTime = currentTime;
 
-    // Apply random bullet spread
-    const spreadAngle = (Math.random() - 0.5) * this.spread;
-    const spreadAngleY = (Math.random() - 0.5) * this.spread;
+    // Apply state-driven bullet spread (ADS tightens, motion/swing widens)
+    const effSpread = this.spreadFor(!!opts?.moving, !!opts?.aiming, isSwinging);
+    const spreadAngle = (Math.random() - 0.5) * effSpread;
+    const spreadAngleY = (Math.random() - 0.5) * effSpread;
     const shootDir = direction.clone();
     
     // Slight random deviation

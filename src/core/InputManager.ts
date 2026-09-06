@@ -23,6 +23,8 @@ export class InputManager {
 
   private domElement: HTMLElement;
   private mouseSensitivity: number = 0.0022;
+  // User setting multiplier (0.5 trackpad-calm … 2.0 twitch), persisted
+  public sensitivityScale: number = 1.0;
 
   constructor(domElement: HTMLElement = document.body) {
     this.domElement = domElement;
@@ -121,8 +123,9 @@ export class InputManager {
     // Dampen and clamp trackpad flick spikes for silky smooth look
     const clampedX = Math.max(-120, Math.min(120, e.movementX));
     const clampedY = Math.max(-120, Math.min(120, e.movementY));
-    this.mouseDelta.x += clampedX * this.mouseSensitivity;
-    this.mouseDelta.y += clampedY * this.mouseSensitivity;
+    const s = this.mouseSensitivity * this.sensitivityScale;
+    this.mouseDelta.x += clampedX * s;
+    this.mouseDelta.y += clampedY * s;
   }
 
   private onWheel(e: WheelEvent): void {

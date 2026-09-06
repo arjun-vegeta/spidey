@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { BaseWeapon, FireResult } from '../weapons/BaseWeapon';
+import { BaseWeapon, FireResult, FireOptions } from '../weapons/BaseWeapon';
 import { Pistol } from '../weapons/Pistol';
 import { SMG } from '../weapons/SMG';
 import { Sniper } from '../weapons/Sniper';
@@ -23,6 +23,10 @@ export class WeaponManager {
 
   // ADS / Aim smoothing factor (0 = hip, 1 = fully aimed)
   public aimProgress: number = 0;
+
+  // Weapon swap raise/lower: brief weight, buffers the next shot
+  public switchTimer: number = 0;
+  public readonly switchTime: number = 0.25;
 
   constructor() {
     this.weapons = [
@@ -49,16 +53,21 @@ export class WeaponManager {
       return false;
     }
 
-    // Holster current
-    this.weapons[this.activeIndex].modelGroup.visible = false;
-    if (this.weapons[this.activeIndex].type === 'sniper') {
-      (this.weapons[this.activeIndex] as Sniper).isScoped = false;
+    // Holster current (reload cancelled, scope dropped)
+    const old = this.weapons[this.activeIndex];
+    old.modelGroup.visible = false;
+    old.isReloading = false;
+    old.reloadProgress = 0;
+    if (old.type === 'sniper') {
+      (old as Sniper).isScoped = false;
     }
 
     this.activeIndex = index;
     const nextWep = this.weapons[this.activeIndex];
     nextWep.modelGroup.visible = true;
+    nextWep.lastFireTime = -10;
 
+    this.switchTimer = this.switchTime;
     soundManager.playWeaponSwitch();
     this.positionWeaponModel();
     return true;
@@ -96,15 +105,17 @@ export class WeaponManager {
   }
 
   /**
-   * Fires the active weapon
+   * Fires the active weapon. Blocked mid-swap (raise/lower weight).
    */
   public fire(
     currentTime: number,
     origin: THREE.Vector3,
     direction: THREE.Vector3,
     isSwinging: boolean,
-    raycastTargets: THREE.Object3D[]
+    raycastTargets: THREE.Object3D[],
+    opts?: FireOptions
   ): FireResult | null {
+    if (this.switchTimer > 0) return null;
     const wep = this.activeWeapon;
 
     // NON-NEGOTIABLE RULE: ONLY PISTOL USABLE WHILE SWINGING!
@@ -119,7 +130,7 @@ export class WeaponManager {
       return null;
     }
 
-    const result = wep.fire(currentTime, origin, direction, isSwinging, raycastTargets);
+    const result = wep.fire(currentTime, origin, direction, isSwinging, raycastTargets, opts);
     if (result) {
       // Play weapon-specific audio
       switch (wep.type) {
@@ -161,6 +172,7 @@ export class WeaponManager {
       w.isReloading = false;
       w.reloadProgress = 0;
     }
+    this.switchTimer = 0;
     this.recoilPos.set(0, 0, 0);
     this.recoilRot.set(0, 0, 0);
     this.aimProgress = 0;
@@ -175,6 +187,7 @@ export class WeaponManager {
   ): void {
     const wep = this.activeWeapon;
     wep.updateReload(dt);
+    if (this.switchTimer > 0) this.switchTimer = Math.max(0, this.switchTimer - dt);
 
     // Smoothly recover from recoil kick
     this.recoilPos.lerp(this.tmpZero, Math.min(1, dt * this.recoilRecoveryRate));
@@ -238,6 +251,12 @@ export class WeaponManager {
 
     // Apply base positions and add offsets + recoil
     this.positionWeaponModel();
+    // Swap dip: gun lowers and rises across the switch window
+    if (this.switchTimer > 0) {
+      const k = this.switchTimer / this.switchTime;
+      baseOffset.y -= Math.sin(k * Math.PI) * 0.12;
+      baseRot.x -= Math.sin(k * Math.PI) * 0.35;
+    }
     wep.modelGroup.position.add(baseOffset).add(this.recoilPos);
     wep.modelGroup.rotation.set(
       wep.modelGroup.rotation.x + baseRot.x + this.recoilRot.x,

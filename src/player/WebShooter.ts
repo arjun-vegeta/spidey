@@ -28,6 +28,9 @@ export class WebShooter {
     new THREE.Vector3(-0.05, -0.04, -1),
   ];
   private tmpDir: THREE.Vector3 = new THREE.Vector3();
+  private tmpBase: THREE.Vector3 = new THREE.Vector3();
+  private tmpTo: THREE.Vector3 = new THREE.Vector3();
+  private tmpN: THREE.Vector3 = new THREE.Vector3();
 
   constructor(physics: SwingPhysics) {
     this.physics = physics;
@@ -37,8 +40,10 @@ export class WebShooter {
   /**
    * Scans forward from camera to find valid buildings/cranes for web-slinging.
    * Uses direct raycast + wide-cone assist + sky bias so swinging feels forgiving.
+   * Falls back to the curated latch registry (antenna tips, parapets, balconies)
+   * when rays hit open sky, so routes read at speed.
    */
-  public scanForTargets(camera: THREE.Camera, collidables: THREE.Object3D[], playerPos?: THREE.Vector3): WebTargetInfo | null {
+  public scanForTargets(camera: THREE.Camera, collidables: THREE.Object3D[], playerPos?: THREE.Vector3, latchAnchors?: THREE.Vector3[]): WebTargetInfo | null {
     const origin = camera.position;
 
     let best: (WebTargetInfo & { penalty: number; score: number }) | null = null;
@@ -76,6 +81,34 @@ export class WebShooter {
     if (best) {
       this.currentTarget = { isValid: true, point: best.point, normal: best.normal, distance: best.distance };
       return this.currentTarget;
+    }
+
+    // Latch magnet: curated anchors win over open sky
+    if (latchAnchors && latchAnchors.length > 0 && playerPos) {
+      this.tmpBase.set(0, 0, -1).applyQuaternion(camera.quaternion).normalize();
+      let anchorBest: THREE.Vector3 | null = null;
+      let anchorScore = Infinity;
+      let anchorDist = 0;
+      for (const a of latchAnchors) {
+        this.tmpTo.subVectors(a, origin);
+        const dist = this.tmpTo.length();
+        if (dist < 5 || dist > this.maxWebDistance) continue;
+        if (a.y < playerPos.y + 1.0) continue;
+        this.tmpTo.normalize();
+        const angle = this.tmpBase.angleTo(this.tmpTo);
+        if (angle > 0.38) continue;
+        const score = angle * 0.65 + (dist / this.maxWebDistance) * 0.35;
+        if (score < anchorScore) {
+          anchorScore = score;
+          anchorBest = a;
+          anchorDist = dist;
+        }
+      }
+      if (anchorBest) {
+        this.tmpN.subVectors(origin, anchorBest).normalize();
+        this.currentTarget = { isValid: true, point: anchorBest.clone(), normal: this.tmpN.clone(), distance: anchorDist };
+        return this.currentTarget;
+      }
     }
 
     // Secondary wide-cone check for nearby skyscraper corners

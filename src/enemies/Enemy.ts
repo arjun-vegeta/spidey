@@ -100,6 +100,9 @@ export abstract class Enemy {
   // Current wave number (set by EnemyManager each frame, used for behavior gates)
   public waveNumber: number = 1;
 
+  // Spawn grace: no attacking for 1.5s after sketch-in (fairness)
+  public spawnGrace: number = 1.5;
+
   constructor(type: EnemyType, maxHealth: number, position: THREE.Vector3) {
     this.id = `${type}_${Math.random().toString(36).substring(2, 9)}`;
     this.type = type;
@@ -235,6 +238,15 @@ export abstract class Enemy {
 
     this.healthBarGroup.visible = false;
     this.group.add(this.healthBarGroup);
+  }
+
+  /**
+   * Flashes the floating health bar (aim hover feedback, damage calls this too).
+   */
+  public pingHealthBar(): void {
+    if (this.isDead) return;
+    this.healthBarVisibleTimer = Math.max(this.healthBarVisibleTimer, 2.5);
+    this.healthBarGroup.visible = true;
   }
 
   /**
@@ -385,6 +397,7 @@ export abstract class Enemy {
     if (this.isDead) return;
 
     this.elapsed += dt;
+    if (this.spawnGrace > 0) this.spawnGrace -= dt;
 
     // 1. Update shader line-boil tremor on all materials
     for (const mat of this.materials) {

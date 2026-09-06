@@ -16,16 +16,28 @@ export class SoundManager {
 
   private isMuted: boolean = false;
   private initialized: boolean = false;
+  private volume: number = 0.7;
 
   public toggleMute(): boolean {
     this.isMuted = !this.isMuted;
-    if (this.masterGain && this.ctx) {
-      this.masterGain.gain.setTargetAtTime(this.isMuted ? 0 : 0.7, this.ctx.currentTime, 0.02);
-    }
+    this.applyVolume();
     return this.isMuted;
   }
 
   public get muted(): boolean { return this.isMuted; }
+
+  /** Persisted master volume 0..1, applied live if context exists. */
+  public setVolume(v: number): void {
+    this.volume = Math.min(1, Math.max(0, v));
+    this.applyVolume();
+  }
+
+  private applyVolume(): void {
+    if (this.masterGain && this.ctx) {
+      const target = this.isMuted ? 0 : this.volume;
+      this.masterGain.gain.setTargetAtTime(target, this.ctx.currentTime, 0.02);
+    }
+  }
 
   constructor() {
     // AudioContext will be initialized on first user interaction
@@ -39,7 +51,7 @@ export class SoundManager {
       this.ctx = new AudioCtx();
 
       this.masterGain = this.ctx.createGain();
-      this.masterGain.gain.setValueAtTime(0.7, this.ctx.currentTime);
+      this.masterGain.gain.setValueAtTime(this.isMuted ? 0 : this.volume, this.ctx.currentTime);
       this.masterGain.connect(this.ctx.destination);
 
       this.sfxGain = this.ctx.createGain();

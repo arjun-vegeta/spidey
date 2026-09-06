@@ -155,6 +155,10 @@ export class SMG extends BaseWeapon {
     dotMesh.position.set(0, 0.13, -0.078);
     this.modelGroup.add(dotMesh);
 
+    // Muzzle socket at flash-hider tip
+    this.muzzleTip.position.set(0, 0.035, -0.51);
+    this.modelGroup.add(this.muzzleTip);
+
     this.modelGroup.scale.set(1.1, 1.1, 1.1);
   }
 }

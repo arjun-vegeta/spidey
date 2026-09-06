@@ -387,48 +387,83 @@ export class EnemyManager {
   }
 
   /**
-   * Spawns requested counts of each enemy type at valid nodes
+   * Spawns requested counts of each enemy type at valid nodes.
+   * Staggered 0.5s trickle with a 12-alive cap: reinforcements, not a mob.
    */
+  private spawnQueue: Array<() => void> = [];
+  private spawnTick: number = 0;
+  private readonly maxAlive: number = 12;
+  private readonly maxProjectiles: number = 60;
+
   private spawnWave(thugs: number, snipers: number, drones: number): void {
     const thugNodes = this.spawnNodes.filter((n) => n.allowedTypes.includes('thug'));
     const sniperNodes = this.spawnNodes.filter((n) => n.allowedTypes.includes('sniper'));
     const droneNodes = this.spawnNodes.filter((n) => n.allowedTypes.includes('drone'));
 
-    // 1. Spawn Thugs
+    this.spawnQueue.length = 0;
+    this.spawnTick = 0.2;
+
+    const thugJobs: Array<() => void> = [];
+    const sniperJobs: Array<() => void> = [];
+    const droneJobs: Array<() => void> = [];
+
+    // 1. Queue Thugs
     for (let i = 0; i < thugs; i++) {
       const node = thugNodes[i % thugNodes.length];
-      const offset = new THREE.Vector3(
-        (Math.random() - 0.5) * 2.0,
-        0,
-        (Math.random() - 0.5) * 2.0
-      );
-      const spawnPos = node.position.clone().add(offset);
-      const enemy = new ThugEnemy(spawnPos, node.waypoints);
-      this.addEnemy(enemy);
+      thugJobs.push(() => {
+        const spawnPos = node.position.clone().add(
+          new THREE.Vector3((Math.random() - 0.5) * 2.0, 0, (Math.random() - 0.5) * 2.0)
+        );
+        this.addEnemy(new ThugEnemy(spawnPos, node.waypoints));
+      });
     }
 
-    // 2. Spawn Snipers
+    // 2. Queue Snipers
     for (let i = 0; i < snipers; i++) {
       const node = sniperNodes[i % sniperNodes.length];
-      const enemy = new SniperEnemy(node.position.clone());
-      this.addEnemy(enemy);
+      sniperJobs.push(() => {
+        this.addEnemy(new SniperEnemy(node.position.clone()));
+      });
     }
 
-    // 3. Spawn Drones
+    // 3. Queue Drones
     for (let i = 0; i < drones; i++) {
       const node = droneNodes[i % droneNodes.length];
-      const offset = new THREE.Vector3(
-        (Math.random() - 0.5) * 4.0,
-        (Math.random() - 0.5) * 3.0,
-        (Math.random() - 0.5) * 4.0
-      );
-      const spawnPos = node.position.clone().add(offset);
-      const enemy = new DroneEnemy(spawnPos);
-      this.addEnemy(enemy);
+      droneJobs.push(() => {
+        const spawnPos = node.position.clone().add(
+          new THREE.Vector3((Math.random() - 0.5) * 4.0, (Math.random() - 0.5) * 3.0, (Math.random() - 0.5) * 4.0)
+        );
+        this.addEnemy(new DroneEnemy(spawnPos));
+      });
     }
 
-    this.totalEnemiesInWave = this.enemies.length;
+    // Interleave round-robin so the entrance is mixed, not thugs-then-all
+    while (thugJobs.length > 0 || sniperJobs.length > 0 || droneJobs.length > 0) {
+      const t = thugJobs.shift();
+      if (t) this.spawnQueue.push(t);
+      const s = sniperJobs.shift();
+      if (s) this.spawnQueue.push(s);
+      const d = droneJobs.shift();
+      if (d) this.spawnQueue.push(d);
+    }
+
+    this.totalEnemiesInWave = thugs + snipers + drones;
     this.enemiesLeft = this.totalEnemiesInWave;
+  }
+
+  /** Trickles queued spawns respecting the alive cap. Called each frame. */
+  private pumpSpawnQueue(dt: number): void {
+    if (this.spawnQueue.length === 0) return;
+    this.spawnTick -= dt;
+    while (this.spawnQueue.length > 0 && this.spawnTick <= 0) {
+      if (this.enemies.length >= this.maxAlive) {
+        this.spawnTick = 0.5;
+        return;
+      }
+      const fn = this.spawnQueue.shift()!;
+      fn();
+      this.spawnTick += 0.5;
+    }
   }
 
   private addEnemy(enemy: Enemy): void {
@@ -599,6 +634,7 @@ export class EnemyManager {
    * Spawns a projectile into the simulation
    */
   public spawnProjectile(req: ProjectileSpawnRequest): void {
+    if (this.projectiles.length >= this.maxProjectiles) return;
     const isSniper = req.isSniper || false;
     const geom = isSniper ? this.sniperGeometry : this.bulletGeometry;
     const mat = isSniper ? this.sniperBulletMaterial : this.bulletMaterial;
@@ -648,6 +684,9 @@ export class EnemyManager {
         this.startNextWave(player.health);
       }
     }
+
+    // 2b. Trickle queued spawns (staggered entrance, alive cap)
+    this.pumpSpawnQueue(dt);
 
     // 3. Update all living enemies
     const playerPos = player.position;
@@ -809,6 +848,8 @@ export class EnemyManager {
     this.totalEnemiesInWave = 0;
     this.waveInProgress = false;
     this.intermissionTimer = 0;
+    this.spawnQueue.length = 0;
+    this.spawnTick = 0;
     this.totalScore = 0;
     this.totalKills = 0;
     this.killStreak = 0;

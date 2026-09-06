@@ -3,6 +3,7 @@ import { Player } from '../player/Player';
 import { WebTargetInfo } from '../player/WebShooter';
 import { Sniper } from '../weapons/Sniper';
 import { Minimap, MapBuilding, MapEnemy } from './Minimap';
+import { SettingsData } from '../core/Settings';
 
 export interface HudExtras {
   yaw: number;
@@ -67,12 +68,18 @@ export class HUD {
   private lastDmgZ: number = 0;
   private lastDmgAt: number = -10;
 
-  constructor() {
+  constructor(private settings: SettingsData) {
     this.container = document.createElement('div');
     this.container.id = 'hud-container';
     document.body.appendChild(this.container);
     this.buildDOM();
+    this.wirePauseMenu();
   }
+
+  // Pause / settings callbacks (wired by Game, HUD never imports Game)
+  public onResumeRequest?: () => void;
+  public onRestartRequest?: () => void;
+  public onSettingsChanged?: (s: SettingsData) => void;
 
   private buildDOM(): void {
     this.container.innerHTML = `
@@ -171,6 +178,24 @@ export class HUD {
       <div id="dmg-edge-b" class="dmg-edge dmg-b"></div>
       <div id="dmg-edge-l" class="dmg-edge dmg-l"></div>
       <div id="dmg-edge-r" class="dmg-edge dmg-r"></div>
+
+      <!-- Onboarding hint (one at a time, bottom-center) -->
+      <div id="hint-bar" class="hint-bar"></div>
+
+      <!-- Pause menu + settings -->
+      <div id="pause-menu" class="pause-menu" style="display:none">
+        <div class="pause-card">
+          <div class="pause-title">PAUSED</div>
+          <div class="pause-sub">the sketch waits for no one (except now)</div>
+          <button id="resume-btn" class="play-prompt-btn pause-btn">RESUME</button>
+          <button id="restart-btn" class="play-prompt-btn pause-btn pause-btn-red">RESTART</button>
+          <label class="pause-row">SENSITIVITY <input id="set-sens" type="range" min="0.5" max="2" step="0.05"><span id="set-sens-v"></span></label>
+          <label class="pause-row">VOLUME <input id="set-vol" type="range" min="0" max="1" step="0.05"><span id="set-vol-v"></span></label>
+          <label class="pause-row">FOV <input id="set-fov" type="range" min="70" max="90" step="1"><span id="set-fov-v"></span></label>
+          <label class="pause-row pause-check"><input id="set-map" type="checkbox"> MINIMAP (N)</label>
+          <div class="pause-keys">WASD move · Right-click swing · F zip · Q aim · R reload · M mute</div>
+        </div>
+      </div>
     `;
 
     // Cache elements safely from this.container
@@ -201,6 +226,66 @@ export class HUD {
     this.dmgEdgeR = this.container.querySelector('#dmg-edge-r');
     const mapCanvas = this.container.querySelector('#minimap') as HTMLCanvasElement | null;
     if (mapCanvas) this.minimap = new Minimap(mapCanvas);
+    this.pauseMenuEl = this.container.querySelector('#pause-menu');
+    this.hintBarEl = this.container.querySelector('#hint-bar');
+  }
+
+  private pauseMenuEl: HTMLElement | null = null;
+  private hintBarEl: HTMLElement | null = null;
+  private lastHintText: string = '__none__';
+
+  private wirePauseMenu(): void {
+    const resume = this.container.querySelector('#resume-btn');
+    if (resume) resume.addEventListener('click', (e) => { e.stopPropagation(); if (this.onResumeRequest) this.onResumeRequest(); });
+    const restart = this.container.querySelector('#restart-btn');
+    if (restart) restart.addEventListener('click', (e) => { e.stopPropagation(); if (this.onRestartRequest) this.onRestartRequest(); });
+
+    const sens = this.container.querySelector('#set-sens') as HTMLInputElement | null;
+    const vol = this.container.querySelector('#set-vol') as HTMLInputElement | null;
+    const fov = this.container.querySelector('#set-fov') as HTMLInputElement | null;
+    const map = this.container.querySelector('#set-map') as HTMLInputElement | null;
+    if (sens) sens.value = String(this.settings.sensitivity);
+    if (vol) vol.value = String(this.settings.volume);
+    if (fov) fov.value = String(this.settings.fov);
+    if (map) map.checked = this.settings.minimap;
+    this.refreshSettingLabels();
+
+    const emit = () => {
+      if (sens) this.settings.sensitivity = parseFloat(sens.value);
+      if (vol) this.settings.volume = parseFloat(vol.value);
+      if (fov) this.settings.fov = parseInt(fov.value, 10);
+      if (map) this.settings.minimap = map.checked;
+      this.refreshSettingLabels();
+      if (this.onSettingsChanged) this.onSettingsChanged({ ...this.settings });
+    };
+    for (const el of [sens, vol, fov, map]) {
+      if (el) el.addEventListener('input', emit);
+    }
+  }
+
+  private refreshSettingLabels(): void {
+    const set = (id: string, text: string) => {
+      const el = this.container.querySelector(id);
+      if (el) el.textContent = text;
+    };
+    set('#set-sens-v', this.settings.sensitivity.toFixed(2) + 'x');
+    set('#set-vol-v', Math.round(this.settings.volume * 100) + '%');
+    set('#set-fov-v', String(Math.round(this.settings.fov)));
+  }
+
+  public setPaused(v: boolean): void {
+    if (this.pauseMenuEl) this.pauseMenuEl.style.display = v ? 'flex' : 'none';
+    if (!v) return;
+    this.refreshSettingLabels();
+  }
+
+  /** Single onboarding hint line. Empty string hides. Cached against DOM churn. */
+  public showHint(text: string): void {
+    if (text === this.lastHintText) return;
+    this.lastHintText = text;
+    if (!this.hintBarEl) return;
+    this.hintBarEl.textContent = text;
+    this.hintBarEl.style.display = text.length > 0 ? 'block' : 'none';
   }
 
   public showScorePopup(text: string, points: number, color: string = '#152778'): void {
@@ -259,6 +344,7 @@ export class HUD {
     if (this.deathEl) this.deathEl.style.display = 'none';
     this.scorePopups.length = 0;
     this.lastPreviewText = '';
+    this.showHint('');
     if (this.wavePreviewEl) this.wavePreviewEl.textContent = '';
   }
 

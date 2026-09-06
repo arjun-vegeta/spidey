@@ -5,6 +5,7 @@ import { InputManager } from './InputManager';
 import { EnemyManager } from '../enemies/EnemyManager';
 import { InkParticles } from '../effects/InkParticles';
 import { HUD, HudExtras } from '../ui/HUD';
+import { loadSettings, saveSettings, SettingsData } from './Settings';
 import { soundManager } from './SoundManager';
 import { FireResult } from '../weapons/BaseWeapon';
 import { InkShaderMaterial } from '../shaders/InkShaderMaterial';
@@ -28,11 +29,18 @@ export class Game {
 
   private readonly paperColor = new THREE.Color(0xfaf7ee);
   private tmpMuzzle: THREE.Vector3 = new THREE.Vector3();
-  private tmpOffset: THREE.Vector3 = new THREE.Vector3();
   private tmpEnd: THREE.Vector3 = new THREE.Vector3();
+  private tmpLook: THREE.Vector3 = new THREE.Vector3();
+  private hoverRay: THREE.Raycaster = new THREE.Raycaster();
   private combatTargets: THREE.Object3D[] = [];
+  private webAnchors: THREE.Vector3[] = [];
   private mapBuildings: Array<{ x: number; z: number; w: number; d: number }> = [];
   private lastPreviewKey: number = -1;
+  private settings: SettingsData;
+
+  // Onboarding beats (wave-1 only, trigger on state never timers)
+  private obStage: number = 0;
+  private obSwung: boolean = false;
 
   constructor() {
     this.scene = new THREE.Scene();
@@ -55,7 +63,8 @@ export class Game {
     container.appendChild(this.renderer.domElement);
 
     this.input = new InputManager(this.renderer.domElement);
-    this.hud = new HUD();
+    this.settings = loadSettings();
+    this.hud = new HUD(this.settings);
 
     this.player = new Player(this.camera, this.input);
 
@@ -75,6 +84,7 @@ export class Game {
     // Simplified collision shells (no more walking through buildings)
     this.player.bindCollider(this.cityBuilder.getWorldCollider());
     this.mapBuildings = this.cityBuilder.getMapBuildings();
+    this.webAnchors = this.cityBuilder.getWebAnchors();
 
     // HUD wave flow + rewards
     this.enemyManager.onWaveStart = (wave) => {
@@ -82,7 +92,9 @@ export class Game {
       this.hud.showWaveAnnouncement(wave, titles[Math.min(wave - 1, titles.length - 1)] ?? 'ELIMINATE ALL INK HOSTILES');
     };
     this.enemyManager.onWaveComplete = (wave) => {
-      this.hud.showWaveAnnouncement(wave, 'WAVE CLEARED · +AMMO · +25 HP');
+      const bonus = 100 * wave;
+      this.totalScore += bonus;
+      this.hud.showWaveAnnouncement(wave, `WAVE CLEARED · +AMMO · +25 HP · +${bonus}`);
       this.player.weaponManager.resetAmmo();
       this.player.heal(25);
       soundManager.playWaveStart(wave + 1);
@@ -102,15 +114,34 @@ export class Game {
 
     this.input.onLockChange = (locked) => {
       const modal = document.getElementById('instructions-modal');
-      if (modal) {
-        if (this.player.isDead) {
-          modal.style.display = 'flex';
-        } else {
-          modal.style.display = locked ? 'none' : 'flex';
-        }
+      if (locked) {
+        if (modal) modal.style.display = 'none';
+        this.hud.setPaused(false);
+        soundManager.ensureContext();
+      } else if (this.player.isDead) {
+        if (modal) modal.style.display = 'flex';
+        this.hud.setPaused(false);
+      } else if (this.isRunning) {
+        if (modal) modal.style.display = 'none';
+        this.hud.setPaused(true);
+      } else {
+        if (modal) modal.style.display = 'flex';
+        this.hud.setPaused(false);
       }
-      if (locked) soundManager.ensureContext();
     };
+
+    // Pause menu actions + persisted settings
+    this.hud.onResumeRequest = () => this.input.requestPointerLock();
+    this.hud.onRestartRequest = () => {
+      this.restart();
+      this.input.requestPointerLock();
+    };
+    this.hud.onSettingsChanged = (s) => {
+      this.settings = s;
+      saveSettings(s);
+      this.applySettings();
+    };
+    this.applySettings();
 
     // Prove the canvas is alive before Play is ever pressed.
     // If this throws (e.g. no WebGL), the boot overlay tells the user instead of a blank page.
@@ -138,6 +169,19 @@ export class Game {
       Game.bootErrorEl = el;
     }
     Game.bootErrorEl.textContent = `SPIDEY ERROR (screenshot this to me):\n${msg}`;
+  }
+
+  public toggleMinimap(): void {
+    this.settings.minimap = !this.settings.minimap;
+    saveSettings(this.settings);
+    this.applySettings();
+  }
+
+  private applySettings(): void {
+    this.input.sensitivityScale = this.settings.sensitivity;
+    soundManager.setVolume(this.settings.volume);
+    this.player.baseFov = this.settings.fov;
+    this.hud.setMinimapVisible(this.settings.minimap);
   }
 
   public start(): void {
@@ -230,11 +274,11 @@ export class Game {
     this.cityBuilder.update(dt);
 
     const combatTargets = this.buildCombatTargets();
-    const fireResult: FireResult | null = this.player.update(dt, collidables, combatTargets);
+    const fireResult: FireResult | null = this.player.update(dt, collidables, combatTargets, this.webAnchors);
 
     if (fireResult) {
-      this.tmpOffset.set(0.2, -0.2, -0.6).applyQuaternion(this.player.camera.quaternion);
-      this.tmpMuzzle.copy(this.player.camera.position).add(this.tmpOffset);
+      // Muzzle flash at the barrel tip (converged aim still comes from the camera)
+      this.player.weaponManager.activeWeapon.muzzleTip.getWorldPosition(this.tmpMuzzle);
       this.particles.triggerMuzzleFlash(this.tmpMuzzle, fireResult.ray.direction);
 
       const hitReport = this.enemyManager.checkBulletHits(
@@ -278,6 +322,17 @@ export class Game {
 
     this.enemyManager.update(dt, this.player, this.camera);
 
+    // Crosshair hover: light up the aimed enemy's health bar (aim feedback)
+    this.tmpLook.set(0, 0, -1).applyQuaternion(this.player.camera.quaternion);
+    this.hoverRay.set(this.player.camera.position, this.tmpLook);
+    this.hoverRay.near = 1;
+    this.hoverRay.far = 120;
+    const hoverHits = this.hoverRay.intersectObjects(combatTargets, false);
+    if (hoverHits.length > 0) {
+      const foe = hoverHits[0].object.userData?.enemy as { pingHealthBar?: () => void } | undefined;
+      if (foe && typeof foe.pingHealthBar === 'function') foe.pingHealthBar();
+    }
+
     // Next-wave preview during intermission
     if (!this.enemyManager.waveInProgress && this.enemyManager.currentWave > 0) {
       if (this.lastPreviewKey !== this.enemyManager.currentWave) {
@@ -289,6 +344,7 @@ export class Game {
     this.particles.update(dt);
 
     const webTarget = this.player.webShooter.currentTarget;
+    this.updateOnboarding(webTarget, fireResult !== null);
     this.hud.update(
       dt,
       this.player,
@@ -302,6 +358,53 @@ export class Game {
     if (this.player.isDead) {
       this.hud.showDeathScreen(this.totalScore, this.enemyManager.lastPlayerDeath);
     }
+  }
+
+  /**
+   * Onboarding beats on wave 1 only. State triggers, never timers;
+   * any shot fired or wave 2 dismisses instantly.
+   */
+  private updateOnboarding(webTarget: { isValid: boolean } | null, fired: boolean): void {
+    if (this.obStage >= 4 || this.enemyManager.currentWave > 1) {
+      if (this.obStage < 4) {
+        this.obStage = 4;
+        this.hud.showHint('');
+      }
+      return;
+    }
+    if (fired && this.obStage >= 3) {
+      this.obStage = 4;
+      this.hud.showHint('');
+      return;
+    }
+    const keys = this.input.keys;
+    switch (this.obStage) {
+      case 0:
+        this.hud.showHint('WASD MOVE · MOUSE LOOK');
+        if (keys['w'] || keys['a'] || keys['s'] || keys['d']) this.obStage = 1;
+        break;
+      case 1:
+        if (this.player.isSwinging) {
+          this.obSwung = true;
+          this.obStage = 2;
+        } else if (!this.physicsGrounded() && webTarget && webTarget.isValid) {
+          this.hud.showHint('HOLD RIGHT-CLICK TO SWING');
+        } else {
+          this.hud.showHint('JUMP, THEN HOLD RIGHT-CLICK TO SWING');
+        }
+        break;
+      case 2:
+        this.hud.showHint('RELEASE + SPACE FOR BOOST');
+        if (this.obSwung && !this.player.isSwinging) this.obStage = 3;
+        break;
+      default:
+        this.hud.showHint('CLICK TO SHOOT THE RED MARKERS');
+        break;
+    }
+  }
+
+  private physicsGrounded(): boolean {
+    return this.player.physics.isGrounded;
   }
 
   private updateDead(dt: number): void {
@@ -323,6 +426,8 @@ export class Game {
     this.player.reset();
     this.totalScore = 0;
     this.lastPreviewKey = -1;
+    this.obStage = 0;
+    this.obSwung = false;
     this.particles.clear();
     this.enemyManager.clear();
     this.enemyManager.startNextWave(this.player.health);

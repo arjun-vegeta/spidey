@@ -63,6 +63,9 @@ export class SwingPhysics {
   public playerHeight: number = 1.8;
   public playerRadius: number = 0.6;
 
+  // ADS move-slow multiplier (set per-frame by Player, 1 = full speed)
+  public speedMultiplier: number = 1.0;
+
   // Feel helpers (set by Player)
   public coyoteTimer: number = 0;
   public jumpBufferTimer: number = 0;
@@ -378,7 +381,7 @@ export class SwingPhysics {
 
     // Ground acceleration
     if (inputDir.lengthSq() > 0.01) {
-      const groundSpeed = 14.0;
+      const groundSpeed = 14.0 * this.speedMultiplier;
       const targetVel = this._tempVecB.copy(inputDir).normalize().multiplyScalar(groundSpeed);
       this.velocity.x += (targetVel.x - this.velocity.x) * 14.0 * dt;
       this.velocity.z += (targetVel.z - this.velocity.z) * 14.0 * dt;

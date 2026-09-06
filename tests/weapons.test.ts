@@ -64,17 +64,36 @@ describe('Weapons System - Swinging Restrictions & Combat Rules', () => {
     const origin = new THREE.Vector3(0, 10, 0);
     const dir = new THREE.Vector3(0, 0, -1);
 
-    // SMG
+    // SMG (let the 0.25s swap raise finish first)
     wepManager.switchWeapon(1);
+    wepManager.update(0.3, false, false, false, 0);
     const smgResult = wepManager.fire(10.0, origin, dir, false, []);
     expect(smgResult).not.toBeNull();
     expect(smg.currentAmmo).toBe(smg.magazineSize - 1);
 
     // Sniper
     wepManager.switchWeapon(2);
+    wepManager.update(0.3, false, false, false, 0);
     const sniperResult = wepManager.fire(12.0, origin, dir, false, []);
     expect(sniperResult).not.toBeNull();
     expect(sniper.currentAmmo).toBe(sniper.magazineSize - 1);
+  });
+
+  it('freshly swapped weapon cannot fire mid-raise (0.25s swap weight)', () => {
+    wepManager.switchWeapon(1);
+    const origin = new THREE.Vector3(0, 10, 0);
+    const dir = new THREE.Vector3(0, 0, -1);
+    expect(wepManager.fire(10.0, origin, dir, false, [])).toBeNull();
+    wepManager.update(0.3, false, false, false, 0);
+    expect(wepManager.fire(10.0, origin, dir, false, [])).not.toBeNull();
+  });
+
+  it('switching cancels an in-progress reload', () => {
+    pistol.currentAmmo = 2;
+    pistol.startReload();
+    expect(pistol.isReloading).toBe(true);
+    wepManager.switchWeapon(1);
+    expect(pistol.isReloading).toBe(false);
   });
 
   it('Sniper does massive damage with high headshot multiplier', () => {

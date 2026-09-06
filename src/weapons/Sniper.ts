@@ -161,6 +161,10 @@ export class Sniper extends BaseWeapon {
     boltKnob.position.set(0.085, 0.08, 0.02);
     this.modelGroup.add(boltKnob);
 
+    // Muzzle socket at brake tip
+    this.muzzleTip.position.set(0, 0.045, -1.02);
+    this.modelGroup.add(this.muzzleTip);
+
     this.modelGroup.scale.set(1.05, 1.05, 1.05);
   }
 }
