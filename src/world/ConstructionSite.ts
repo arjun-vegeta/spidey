@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { InkShaderMaterial } from '../shaders/InkShaderMaterial';
+import { LANDABLE_TRIM } from './LandableTrim';
 
 /**
  * Procedural Construction Site representing the iconic unfinished multi-story high-rise.
@@ -16,6 +17,7 @@ export class ConstructionSite {
   private collidableMeshes: THREE.Mesh[] = [];
   private grapplePoints: THREE.Vector3[] = [];
   private materials: THREE.ShaderMaterial[] = [];
+  private steppingStoneBounds: Array<{ minX: number; minY: number; minZ: number; maxX: number; maxY: number; maxZ: number }> = [];
 
   // Animated elements
   private craneHookGroup: THREE.Group | null = null;
@@ -27,6 +29,7 @@ export class ConstructionSite {
   private woodMat: THREE.ShaderMaterial;
   private metalMat: THREE.ShaderMaterial;
   private accentMat: THREE.ShaderMaterial;
+  private landableTrimMat: THREE.ShaderMaterial;
 
   constructor() {
     this.group = new THREE.Group();
@@ -38,13 +41,15 @@ export class ConstructionSite {
     this.woodMat = InkShaderMaterial.create({ inkColor: new THREE.Color(0x1a2a6c) });
     this.metalMat = InkShaderMaterial.create({ inkColor: new THREE.Color(0x0f1c3f) });
     this.accentMat = InkShaderMaterial.create({ isAccent: true });
+    this.landableTrimMat = InkShaderMaterial.create({ inkColor: LANDABLE_TRIM });
 
     this.materials.push(
       this.concreteMat,
       this.craneMat,
       this.woodMat,
       this.metalMat,
-      this.accentMat
+      this.accentMat,
+      this.landableTrimMat
     );
 
     this.buildStructure();
@@ -53,6 +58,7 @@ export class ConstructionSite {
     this.buildScaffolding();
     this.buildRoofCrane();
     this.buildProps();
+    this.buildSteppingStones();
   }
 
   /**
@@ -121,9 +127,33 @@ export class ConstructionSite {
         eastSouthSlab.position.set(9.5, slabY, -7.5);
       }
 
-      // Add grapple points at the 4 corners of each slab
       const halfW = buildingWidth * 0.5;
       const halfD = buildingDepth * 0.5;
+
+      // Landable edge trim strips along outer slab perimeter edges
+      const trimH = 0.08;
+      const trimT = 0.12;
+      const trimY = slabY + slabThickness * 0.5 + trimH * 0.5;
+
+      // North edge (z = halfD)
+      const nTrimGeom = new THREE.BoxGeometry(buildingWidth, trimH, trimT);
+      const nTrim = this.addMeshWithEdges(this.group, nTrimGeom, this.landableTrimMat, LANDABLE_TRIM, false);
+      nTrim.position.set(0, trimY, halfD - trimT * 0.5);
+
+      // South edge (z = -halfD)
+      const sTrim = this.addMeshWithEdges(this.group, nTrimGeom, this.landableTrimMat, LANDABLE_TRIM, false);
+      sTrim.position.set(0, trimY, -halfD + trimT * 0.5);
+
+      // West edge (x = -halfW)
+      const ewTrimGeom = new THREE.BoxGeometry(trimT, trimH, buildingDepth - trimT * 2);
+      const wTrim = this.addMeshWithEdges(this.group, ewTrimGeom, this.landableTrimMat, LANDABLE_TRIM, false);
+      wTrim.position.set(-halfW + trimT * 0.5, trimY, 0);
+
+      // East edge (x = halfW)
+      const eTrim = this.addMeshWithEdges(this.group, ewTrimGeom, this.landableTrimMat, LANDABLE_TRIM, false);
+      eTrim.position.set(halfW - trimT * 0.5, trimY, 0);
+
+      // Add grapple points at the 4 corners of each slab
       this.grapplePoints.push(
         new THREE.Vector3(-halfW, slabY + 0.3, -halfD),
         new THREE.Vector3(halfW, slabY + 0.3, -halfD),
@@ -737,17 +767,39 @@ export class ConstructionSite {
     );
     gBot.position.set(0, girderY - girderHeight * 0.5, 0);
 
+    // Non-landable warning marker: red/white striped hanging marker under the hook indicates
+    // moving/swaying hook (no standing, no floor shell, no latching within 3m)
+    const markerGroup = new THREE.Group();
+    markerGroup.name = 'CraneHookNonLandableMarker';
+    markerGroup.position.set(0, hookBlockY - 1.25, 0);
+
+    const numStripes = 4;
+    const stripeH = 0.22;
+    const markerRadius = 0.16;
+    for (let i = 0; i < numStripes; i++) {
+      const sGeom = new THREE.CylinderGeometry(markerRadius, markerRadius, stripeH, 10);
+      const isRed = i % 2 === 0;
+      const sMat = isRed ? this.accentMat : this.concreteMat;
+      const sMesh = this.addMeshWithEdges(
+        markerGroup,
+        sGeom,
+        sMat,
+        isRed ? InkShaderMaterial.defaultAccentColor : InkShaderMaterial.defaultInkColor,
+        false
+      );
+      sMesh.position.set(0, -i * stripeH, 0);
+    }
+    this.craneHookGroup.add(markerGroup);
+
     craneGroup.add(this.craneHookGroup);
     this.group.add(craneGroup);
 
-    // High-value grapple points on the crane
+    // High-value grapple points on the crane (apex, jib tip, trolley, counterweight)
+    // Note: Suspended hook and girder are moving/non-landable, so no grapple points within 3m
     this.grapplePoints.push(
       new THREE.Vector3(craneBaseX, apexTopY, craneBaseZ), // Cathead apex
       new THREE.Vector3(jibTipX, jibY, craneBaseZ), // Jib tip
       new THREE.Vector3(trolleyX, trolleyY, craneBaseZ), // Trolley
-      new THREE.Vector3(trolleyX, trolleyY + girderY, craneBaseZ), // Suspended girder center
-      new THREE.Vector3(trolleyX - 4.2, trolleyY + girderY, craneBaseZ), // Girder left end
-      new THREE.Vector3(trolleyX + 4.2, trolleyY + girderY, craneBaseZ), // Girder right end
       new THREE.Vector3(craneBaseX - counterLength, jibY + 1.2, craneBaseZ) // Counterweight
     );
   }
@@ -771,6 +823,15 @@ export class ConstructionSite {
       [12.0, 0.6, 6.0, Math.PI * 0.5],
       [-12.0, 0.6, -12.0, 0],
       [-7.0, 0.6, -12.0, 0],
+      // Additional street barriers for wave 1 cover near site
+      [-6.0, 0.6, -15.0, 0],
+      [0.0, 0.6, -15.0, 0],
+      [6.0, 0.6, -15.0, 0.1],
+      [-5.0, 0.6, 15.0, 0],
+      [2.0, 0.6, 15.0, -0.1],
+      [8.0, 0.6, 15.0, 0],
+      [15.0, 0.6, -3.0, Math.PI * 0.5],
+      [15.0, 0.6, 3.0, Math.PI * 0.5],
       // Upper floors
       [-5.0, 5.6, 6.0, 0.4],
       [2.0, 10.6, -4.0, -0.3],
@@ -826,7 +887,12 @@ export class ConstructionSite {
       [-7.1, 2.1, -5.1, 1.1, 0.1],
       [6.0, 5.5, -6.0, 1.4, 0.5],
       [-9.0, 15.5, -2.0, 1.5, -0.2],
-      [7.0, 20.5, 6.0, 1.3, 0.3]
+      [7.0, 20.5, 6.0, 1.3, 0.3],
+      // Street cover near site
+      [-4.0, 0.5, -16.5, 1.4, 0.2],
+      [5.0, 0.5, -16.0, 1.5, -0.2],
+      [3.0, 0.5, 16.5, 1.3, 0.4],
+      [15.5, 0.5, 0.0, 1.4, 0.1]
     ];
 
     for (const [cx, cy, cz, csize, crot] of cratePositions) {
@@ -855,7 +921,7 @@ export class ConstructionSite {
         post.position.set(x, fy + railHeight * 0.5, -10.9);
       }
 
-      // West edge railings (x = -13.0, along z from -10 to 10, skip skybridge on floor 3)
+      // West edge railings (x = -13.0, along z from -10 to 10)
       if (floor !== 3) {
         const westRailGeom = new THREE.BoxGeometry(0.08, 0.08, 20.0);
         const westRail = this.addMeshWithEdges(propsGroup, westRailGeom, this.craneMat, InkShaderMaterial.craneColor, false);
@@ -865,10 +931,110 @@ export class ConstructionSite {
           const post = this.addMeshWithEdges(propsGroup, postGeom, this.craneMat, InkShaderMaterial.craneColor, false);
           post.position.set(-12.9, fy + railHeight * 0.5, z);
         }
+      } else {
+        // Floor 3 connects to skybridge at z in [-1.6, 1.6].
+        // Add railings on both sides of the bridge opening to prevent accidental walk-offs!
+        // North section: z from 1.6 to 10.0 (length 8.4m, center z = 5.8)
+        const northRailGeom = new THREE.BoxGeometry(0.08, 0.08, 8.4);
+        const northRail = this.addMeshWithEdges(propsGroup, northRailGeom, this.craneMat, InkShaderMaterial.craneColor, true);
+        northRail.position.set(-12.9, fy + railHeight, 5.8);
+
+        for (let z = 1.6; z <= 10.0; z += 2.8) {
+          const post = this.addMeshWithEdges(propsGroup, postGeom, this.craneMat, InkShaderMaterial.craneColor, false);
+          post.position.set(-12.9, fy + railHeight * 0.5, z);
+        }
+
+        // South section: z from -10.0 to -1.6 (length 8.4m, center z = -5.8)
+        const southRailGeom = new THREE.BoxGeometry(0.08, 0.08, 8.4);
+        const southRail = this.addMeshWithEdges(propsGroup, southRailGeom, this.craneMat, InkShaderMaterial.craneColor, true);
+        southRail.position.set(-12.9, fy + railHeight, -5.8);
+
+        for (let z = -10.0; z <= -1.6; z += 2.8) {
+          const post = this.addMeshWithEdges(propsGroup, postGeom, this.craneMat, InkShaderMaterial.craneColor, false);
+          post.position.set(-12.9, fy + railHeight * 0.5, z);
+        }
       }
     }
 
     this.group.add(propsGroup);
+  }
+
+  /**
+   * Builds mid-air stepping stone platforms near spawn (0, 4, 18 area)
+   * reachable by jump+boost, with landable trim strips.
+   */
+  private buildSteppingStones(): void {
+    const steppingStonesGroup = new THREE.Group();
+    steppingStonesGroup.name = 'SteppingStones';
+
+    const stoneConfigs = [
+      { x: 0.0, y: 2.5, z: 16.5, w: 2.4, d: 2.4 },
+      { x: 2.8, y: 4.0, z: 14.2, w: 2.4, d: 2.4 },
+      { x: -1.8, y: 5.2, z: 12.2, w: 2.4, d: 2.4 },
+    ];
+
+    const slabH = 0.3;
+    const trimT = 0.10;
+    const trimH = 0.06;
+
+    for (let i = 0; i < stoneConfigs.length; i++) {
+      const cfg = stoneConfigs[i];
+      const pGroup = new THREE.Group();
+      pGroup.name = `SteppingStone_${i + 1}`;
+      pGroup.position.set(cfg.x, cfg.y, cfg.z);
+
+      // Wooden pallet platform slab
+      const slabGeom = new THREE.BoxGeometry(cfg.w, slabH, cfg.d);
+      const slab = this.addMeshWithEdges(pGroup, slabGeom, this.woodMat, InkShaderMaterial.defaultInkColor, true);
+      slab.position.set(0, -slabH * 0.5, 0);
+
+      // Crate on corner for tactical cover / step
+      const crateSize = 0.8;
+      const crateGeom = new THREE.BoxGeometry(crateSize, crateSize, crateSize);
+      const crate = this.addMeshWithEdges(pGroup, crateGeom, this.woodMat, InkShaderMaterial.defaultInkColor, true);
+      crate.position.set(cfg.w * 0.28, crateSize * 0.5, -cfg.d * 0.28);
+
+      // Landable trim strips on all 4 outer edges
+      const halfW = cfg.w * 0.5;
+      const halfD = cfg.d * 0.5;
+
+      // North & South trims
+      const nsTrimGeom = new THREE.BoxGeometry(cfg.w, trimH, trimT);
+      const nTrim = this.addMeshWithEdges(pGroup, nsTrimGeom, this.landableTrimMat, LANDABLE_TRIM, false);
+      nTrim.position.set(0, trimH * 0.5, halfD - trimT * 0.5);
+
+      const sTrim = this.addMeshWithEdges(pGroup, nsTrimGeom, this.landableTrimMat, LANDABLE_TRIM, false);
+      sTrim.position.set(0, trimH * 0.5, -halfD + trimT * 0.5);
+
+      // East & West trims
+      const ewTrimGeom = new THREE.BoxGeometry(trimT, trimH, cfg.d - trimT * 2);
+      const eTrim = this.addMeshWithEdges(pGroup, ewTrimGeom, this.landableTrimMat, LANDABLE_TRIM, false);
+      eTrim.position.set(halfW - trimT * 0.5, trimH * 0.5, 0);
+
+      const wTrim = this.addMeshWithEdges(pGroup, ewTrimGeom, this.landableTrimMat, LANDABLE_TRIM, false);
+      wTrim.position.set(-halfW + trimT * 0.5, trimH * 0.5, 0);
+
+      steppingStonesGroup.add(pGroup);
+
+      // Register bounding box for WorldCollider floor shells
+      this.steppingStoneBounds.push({
+        minX: cfg.x - halfW,
+        minY: cfg.y - slabH,
+        minZ: cfg.z - halfD,
+        maxX: cfg.x + halfW,
+        maxY: cfg.y,
+        maxZ: cfg.z + halfD,
+      });
+    }
+
+    this.group.add(steppingStonesGroup);
+  }
+
+  /**
+   * Returns bounding boxes of stepping stones for collision shells
+   */
+  public getSteppingStoneBounds(): Array<{ minX: number; minY: number; minZ: number; maxX: number; maxY: number; maxZ: number }> {
+    return this.steppingStoneBounds;
   }
 
   /**

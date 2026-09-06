@@ -1,5 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { WorldCollider } from '../src/world/WorldCollider';
+import { CityBuilder } from '../src/world/CityBuilder';
+
 
 function buildTestCollider(): WorldCollider {
   const w = new WorldCollider();
@@ -60,3 +62,50 @@ describe('WorldCollider - simplified collision shells', () => {
     expect(out.x).toBe(50);
   });
 });
+
+describe('City Collision Shells Integration [8 + 29]', () => {
+  const cb = new CityBuilder();
+  const coll = cb.getWorldCollider();
+
+  it('stands feet on balcony floor', () => {
+    // Balcony on East-1 tower at x=42.9, y=18, z=0
+    expect(coll.groundAt(42.9, 18.0, 0.0)).toBe(18.0);
+  });
+
+  it('blocks walk-off at balcony outer railing (push-out)', () => {
+    // Outer rail at x=41.8..41.95 on balcony level y=18
+    const out = { x: 0, z: 0, nx: 0, nz: 0, pushed: false };
+    coll.pushOut(41.7, 0, 0.6, 18.0, 19.8, out);
+    expect(out.pushed).toBe(true);
+    expect(out.nx).toBe(-1);
+  });
+
+  it('stands feet on artdeco setback terrace ring', () => {
+    // North-1 setback terrace ring at z=75.5, y=52
+    expect(coll.groundAt(0, 52.0, 75.5)).toBe(52.0);
+  });
+
+  it('stair-cutout hole is NOT ground (falls through to street)', () => {
+    // In stairwell cutout (x: 6..13, z: -4..6), floor 1 at 5.5 is open
+    expect(coll.groundAt(9.5, 5.5, 1.0)).not.toBe(5.5);
+    expect(coll.groundAt(9.5, 5.5, 1.0)).toBe(0.5);
+
+    // Outside the hole, solid slab stands firmly at 5.5
+    expect(coll.groundAt(0, 5.5, 0)).toBe(5.5);
+  });
+
+  it('stands feet on construction site floor slabs at 5.5, 10.5, 15.5, 20.5', () => {
+    for (const y of [5.5, 10.5, 15.5, 20.5]) {
+      expect(coll.groundAt(0, y, 0)).toBe(y);
+    }
+  });
+
+  it('exposes dumpBoxes() and dumpBounds() for debug toggles', () => {
+    expect(coll.dumpBoxes()).toBeGreaterThan(50);
+    const bounds = coll.dumpBounds();
+    expect(bounds.length).toBe(coll.dumpBoxes());
+    expect(bounds[0]).toHaveProperty('minX');
+    expect(bounds[0]).toHaveProperty('tag');
+  });
+});
+

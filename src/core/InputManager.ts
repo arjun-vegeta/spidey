@@ -1,3 +1,19 @@
+/**
+ * KEYMAP CONSTANTS & CONTROLS BINDINGS (Milestone 2 Finalized):
+ * - W / ArrowUp: Move forward (ground/air) | Tangential momentum pump (swinging).
+ * - S / ArrowDown: Move backward (ground) | Air brake (air, 2x horizontal speed bleed).
+ * - A / D / ArrowLeft / ArrowRight: Strafe (ground/air) | Arc steering lean (swinging).
+ * - Shift / C: Web reel-in ONLY (rope length shortening). No sprint! Sprint is
+ *   intentionally omitted to avoid conflicting with web reeling and maintain purity.
+ * - Ctrl / X: Web reel-out (swinging) | Dive assist (air: pitch assist + speed boost).
+ * - Space: Jump (ground) | Slingshot release boost (swinging) | Zip cancel boost (web zip).
+ * - Right-Click / E: Web attach & hold swing.
+ * - F: Web zip to target anchor / ledge.
+ * - Left-Click / V / Enter: Primary fire active weapon.
+ * - Q / Middle-Click: Aim Down Sights (ADS) / Sniper scope toggle.
+ * - 1, 2, 3 / Mouse Wheel: Weapon select (Pistol, SMG, Sniper).
+ * - R: Reload weapon.
+ */
 export class InputManager {
   // Key states
   public keys: { [key: string]: boolean } = {};
@@ -25,6 +41,15 @@ export class InputManager {
   private mouseSensitivity: number = 0.0022;
   // User setting multiplier (0.5 trackpad-calm … 2.0 twitch), persisted
   public sensitivityScale: number = 1.0;
+
+  // ADS sensitivity scaling (0 = hipfire / no scaling, 1 = full ADS scaling)
+  public adsScale: number = 0;
+  public fovRatio: number = 1.0;
+
+  public setAdsScaling(adsScale: number, fovRatio: number): void {
+    this.adsScale = Math.max(0, Math.min(1, adsScale));
+    this.fovRatio = Math.max(0.01, Math.min(2.0, fovRatio));
+  }
 
   constructor(domElement: HTMLElement = document.body) {
     this.domElement = domElement;
@@ -123,7 +148,9 @@ export class InputManager {
     // Dampen and clamp trackpad flick spikes for silky smooth look
     const clampedX = Math.max(-120, Math.min(120, e.movementX));
     const clampedY = Math.max(-120, Math.min(120, e.movementY));
-    const s = this.mouseSensitivity * this.sensitivityScale;
+    // ADS sensitivity scaling formula: sensitivityScale * lerp(1, fovRatio, adsScale)
+    const adsFactor = 1.0 + (this.fovRatio - 1.0) * this.adsScale;
+    const s = this.mouseSensitivity * this.sensitivityScale * adsFactor;
     this.mouseDelta.x += clampedX * s;
     this.mouseDelta.y += clampedY * s;
   }
@@ -157,6 +184,7 @@ export class InputManager {
   public isJumping(): boolean { return !!this.keys[' ']; }
   public isReelingIn(): boolean { return !!(this.keys['shift'] || this.keys['c']); }
   public isReelingOut(): boolean { return !!(this.keys['control'] || this.keys['x']); }
+  public isDiving(): boolean { return !!(this.keys['control'] || this.keys['x']); }
   public isFiring(): boolean { return !!(this.mouseButtons[0] || this.keys['v'] || this.keys['enter']); }
   public isWebHolding(): boolean { return !!(this.mouseButtons[2] || this.keys['e']); }
   public isZoomHolding(): boolean { return !!(this.keys['q'] || this.mouseButtons[1]); }

@@ -40,7 +40,8 @@ window.addEventListener('DOMContentLoaded', () => {
 
   if (modal) {
     modal.addEventListener('click', (e) => {
-      if ((e.target as HTMLElement).closest('button')) return;
+      const target = e.target as HTMLElement;
+      if (target.closest('button') || target.closest('input') || target.closest('label') || target.closest('select')) return;
       startGame();
     });
   }
@@ -62,7 +63,7 @@ window.addEventListener('DOMContentLoaded', () => {
       startGame();
     }
     if (e.key === 'm' || e.key === 'M') {
-      soundManager.toggleMute();
+      game.toggleMute();
     }
     if (e.key === 'n' || e.key === 'N') {
       game.toggleMinimap();

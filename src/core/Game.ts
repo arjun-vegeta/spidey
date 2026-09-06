@@ -89,7 +89,12 @@ export class Game {
     // HUD wave flow + rewards
     this.enemyManager.onWaveStart = (wave) => {
       const titles = ['INK INVASION BEGINS', 'THE SKETCH FIGHTS BACK', 'RED INK RISING'];
-      this.hud.showWaveAnnouncement(wave, titles[Math.min(wave - 1, titles.length - 1)] ?? 'ELIMINATE ALL INK HOSTILES');
+      const comp = this.enemyManager.compositionFor ? this.enemyManager.compositionFor(wave) : this.enemyManager.peekNextWave();
+      this.hud.showWaveAnnouncement(
+        wave,
+        titles[Math.min(wave - 1, titles.length - 1)] ?? 'ELIMINATE ALL INK HOSTILES',
+        comp
+      );
     };
     this.enemyManager.onWaveComplete = (wave) => {
       const bonus = 100 * wave;
@@ -141,6 +146,7 @@ export class Game {
       this.restart();
       this.input.requestPointerLock();
     };
+    this.hud.onQuitRequest = () => this.resetToMenu();
     this.hud.onSettingsChanged = (s) => {
       this.settings = s;
       saveSettings(s);
@@ -180,13 +186,32 @@ export class Game {
     this.settings.minimap = !this.settings.minimap;
     saveSettings(this.settings);
     this.applySettings();
+    this.hud.syncSettings(this.settings);
   }
 
-  private applySettings(): void {
+  public toggleMute(): void {
+    this.settings.muted = !this.settings.muted;
+    saveSettings(this.settings);
+    this.applySettings();
+    this.hud.syncSettings(this.settings);
+  }
+
+  public applySettings(): void {
     this.input.sensitivityScale = this.settings.sensitivity;
     soundManager.setVolume(this.settings.volume);
+    if (soundManager.muted !== this.settings.muted) {
+      soundManager.toggleMute();
+    }
     this.player.baseFov = this.settings.fov;
     this.hud.setMinimapVisible(this.settings.minimap);
+
+    if (this.settings.quality === 'low') {
+      this.renderer.setPixelRatio(1);
+      this.particles.setDensity(0.5);
+    } else {
+      this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+      this.particles.setDensity(1);
+    }
   }
 
   public start(): void {
@@ -296,7 +321,7 @@ export class Game {
         // Tracer to flesh so hits read clearly
         if (fireResult.point) this.particles.spawnTracer(this.tmpMuzzle, fireResult.point);
         soundManager.playHitMarker(hitReport.isHeadshot);
-        this.hud.triggerHitmarker(hitReport.isHeadshot);
+        this.hud.triggerHitmarker(hitReport.isHeadshot, hitReport.killed);
 
         if (hitReport.killed && hitReport.killEvent) {
           const k = hitReport.killEvent;
@@ -438,5 +463,35 @@ export class Game {
     this.enemyManager.startNextWave(this.player.health);
     this.hud.hideDeathScreen();
     this.lastTime = performance.now();
+  }
+
+  public resetToMenu(): void {
+    this.isRunning = false;
+    this.player.reset();
+    this.totalScore = 0;
+    this.lastPreviewKey = -1;
+    this.obStage = 0;
+    this.obSwung = false;
+    this.particles.clear();
+    this.enemyManager.clear();
+    this.hud.setPaused(false);
+    this.hud.hideDeathScreen();
+    soundManager.updateWind(0, 45);
+
+    if (document.pointerLockElement) {
+      document.exitPointerLock();
+    }
+
+    const modal = document.getElementById('instructions-modal');
+    if (modal) {
+      modal.style.display = 'flex';
+    }
+
+    try {
+      this.player.lookInit();
+      this.render();
+    } catch (err) {
+      Game.showBootError(err);
+    }
   }
 }

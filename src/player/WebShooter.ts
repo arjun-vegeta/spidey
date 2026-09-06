@@ -1,7 +1,29 @@
 import * as THREE from 'three';
-import { SwingPhysics } from './SwingPhysics';
+import { SwingPhysics, MovementMode } from './SwingPhysics';
 import { WebRenderer } from '../effects/WebRenderer';
 import { soundManager } from '../core/SoundManager';
+
+export enum RopeState {
+  HIDDEN = 'HIDDEN',
+  TAUT = 'TAUT',
+  SLACK = 'SLACK',
+  ZIPPING = 'ZIPPING',
+}
+
+/**
+ * Pure scoring function for web anchor candidates.
+ * Lower score is better. Angle has primary weight (65%), distance has secondary weight (35%).
+ * Higher anchors above player receive a height bonus that reduces the score.
+ */
+export function scoreAnchor(
+  angleRad: number,
+  distM: number,
+  maxDist: number = 110.0,
+  heightBonus: number = 0
+): number {
+  const normDist = maxDist > 0 ? distM / maxDist : 0;
+  return angleRad * 0.65 + normDist * 0.35 - heightBonus * 0.02;
+}
 
 export interface WebTargetInfo {
   isValid: boolean;
@@ -17,6 +39,7 @@ export class WebShooter {
 
   public currentTarget: WebTargetInfo | null = null;
   public isWebActive: boolean = false;
+  public ropeState: RopeState = RopeState.HIDDEN;
 
   private raycaster: THREE.Raycaster = new THREE.Raycaster();
   private assistDirs: THREE.Vector3[] = [
@@ -97,7 +120,7 @@ export class WebShooter {
         this.tmpTo.normalize();
         const angle = this.tmpBase.angleTo(this.tmpTo);
         if (angle > 0.38) continue;
-        const score = angle * 0.65 + (dist / this.maxWebDistance) * 0.35;
+        const score = scoreAnchor(angle, dist, this.maxWebDistance, 0);
         if (score < anchorScore) {
           anchorScore = score;
           anchorBest = a;
@@ -127,6 +150,7 @@ export class WebShooter {
 
     this.physics.attachWeb(anchor, this.currentTarget?.normal);
     this.isWebActive = true;
+    this.ropeState = RopeState.TAUT;
     soundManager.playWebShoot();
     setTimeout(() => soundManager.playWebLatch(), 60);
 
@@ -141,6 +165,7 @@ export class WebShooter {
 
     this.physics.releaseWeb(jumpBoost, lookDir);
     this.isWebActive = false;
+    this.ropeState = RopeState.HIDDEN;
     this.webRenderer.hide();
     soundManager.playWebRelease();
   }
@@ -154,31 +179,47 @@ export class WebShooter {
 
     this.physics.startWebZip(target);
     this.isWebActive = true;
+    this.ropeState = RopeState.ZIPPING;
     soundManager.playWebShoot();
     return true;
   }
 
   /**
-   * Updates web line visualization
+   * Cancels active web zip into a swing-style release boost
+   */
+  public cancelWebZip(lookDir?: THREE.Vector3): void {
+    this.physics.cancelWebZip(lookDir);
+    this.isWebActive = false;
+    this.ropeState = RopeState.HIDDEN;
+    this.webRenderer.hide();
+    soundManager.playWebRelease();
+  }
+
+  /**
+   * Updates web line visualization driven by ropeState
    */
   public update(dt: number, wristWorldPos: THREE.Vector3): void {
-    if (this.isWebActive && this.physics.webAnchor) {
-      const time = performance.now() * 0.001;
-      this.webRenderer.updateWeb(
-        wristWorldPos,
-        this.physics.webAnchor,
-        this.physics.isWebTaut,
-        time
-      );
-    } else if (this.isWebActive && this.physics.zipTarget) {
+    if (this.isWebActive && this.physics.mode === MovementMode.WEB_ZIPPING && this.physics.zipTarget) {
+      this.ropeState = RopeState.ZIPPING;
       const time = performance.now() * 0.001;
       this.webRenderer.updateWeb(
         wristWorldPos,
         this.physics.zipTarget,
-        true,
+        this.ropeState,
+        time
+      );
+    } else if (this.isWebActive && this.physics.webAnchor && this.physics.mode === MovementMode.SWINGING) {
+      this.ropeState = this.physics.isWebTaut ? RopeState.TAUT : RopeState.SLACK;
+      const time = performance.now() * 0.001;
+      this.webRenderer.updateWeb(
+        wristWorldPos,
+        this.physics.webAnchor,
+        this.ropeState,
         time
       );
     } else {
+      this.ropeState = RopeState.HIDDEN;
+      this.isWebActive = false;
       this.webRenderer.hide();
     }
   }

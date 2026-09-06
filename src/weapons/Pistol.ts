@@ -2,6 +2,22 @@ import * as THREE from 'three';
 import { BaseWeapon } from './BaseWeapon';
 import { InkShaderMaterial } from '../shaders/InkShaderMaterial';
 
+/**
+ * ====================================================================
+ * WEAPON TUNING SPECIFICATION [GAME_PLAN 24.2]
+ * --------------------------------------------------------------------
+ * Weapon:                  PISTOL
+ * Damage:                  42
+ * Headshot Multiplier:     2.5x (105 dmg — one-taps 90 HP thug at all ranges)
+ * Falloff Band:            Start: 18m, End: 60m, Floor: 60% (25.2 dmg min)
+ * Rate of Fire (RoF):      4.8 rounds/s (semi-auto discipline)
+ * Magazine / Reserve Ammo: 12 / 60
+ * Spread (Hip / ADS):      0.009 rad (~0.52°) / 0.00495 rad (~0.28°)
+ * Reload Time:             1.1s
+ * Swing Usability:         ENABLED (sole aerial combat weapon)
+ * TTK Breakpoints:         Thug (90 HP) body = 3 shots (close <18m); head = 1 shot (all ranges)
+ * ====================================================================
+ */
 export class Pistol extends BaseWeapon {
   public readonly name = 'PISTOL';
   public readonly type = 'pistol' as const;
@@ -12,6 +28,9 @@ export class Pistol extends BaseWeapon {
   public readonly damage = 42;
   public readonly headshotMultiplier = 2.5;
   public readonly range = 90;
+  public readonly falloffStart = 18;
+  public readonly falloffEnd = 60;
+  public readonly falloffFloor = 0.60;
   public readonly spread = 0.009;
   public readonly recoilAmount = 0.07;
   public readonly reloadTime = 1.1;
@@ -38,6 +57,10 @@ export class Pistol extends BaseWeapon {
       useUv: true,
       uvScale: 2.0
     });
+
+    // Register flash materials for 1-frame muzzle emissive pulse
+    this.registerFlashMaterial(gunMat, new THREE.Color(0x122262), new THREE.Color(0x7aa5f8));
+    this.registerFlashMaterial(darkMetalMat, new THREE.Color(0x0a1435), new THREE.Color(0x4060b0));
 
     // Red dot reticle material
     const redDotMat = new THREE.MeshBasicMaterial({

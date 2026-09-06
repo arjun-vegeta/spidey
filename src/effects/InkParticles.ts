@@ -33,6 +33,15 @@ export class InkParticles {
   private colors: Float32Array;
   private sizes: Float32Array;
   private maxParticles: number = 800;
+  private density: number = 1.0;
+
+  public setDensity(density: 0.5 | 1): void {
+    this.density = density;
+    this.maxParticles = density < 1 ? 400 : 800;
+    if (this.particles.length > this.maxParticles) {
+      this.particles.length = this.maxParticles;
+    }
+  }
 
   private tracerGroup: THREE.Group = new THREE.Group();
   private rootGroup: THREE.Group = new THREE.Group();
@@ -200,7 +209,8 @@ export class InkParticles {
   public spawnTracer(start: THREE.Vector3, end: THREE.Vector3, color: THREE.Color = new THREE.Color(0x152778)): void {
     let t = this.tracerPool.pop();
     if (!t) {
-      if (this.tracerLines.length >= 48) return;
+      const maxTracers = this.density < 1 ? 24 : 48;
+      if (this.tracerLines.length >= maxTracers) return;
       const geom = new THREE.BufferGeometry();
       geom.setAttribute('position', new THREE.BufferAttribute(new Float32Array(6), 3));
       const mat = new THREE.LineBasicMaterial({ color: 0x152778, transparent: true, opacity: 0.9 });
@@ -240,6 +250,7 @@ export class InkParticles {
   }
 
   private addParticle(p: Particle): void {
+    if (this.density < 1 && Math.random() > this.density) return;
     if (this.particles.length < this.maxParticles) {
       this.particles.push(p);
     }

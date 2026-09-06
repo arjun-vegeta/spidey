@@ -6,7 +6,7 @@ export interface PushResult {
   x: number; z: number; nx: number; nz: number; pushed: boolean;
 }
 
-interface ColliderBox {
+export interface BoxBounds {
   minX: number; minY: number; minZ: number;
   maxX: number; maxY: number; maxZ: number;
   tag: ColliderTag;
@@ -18,10 +18,20 @@ interface ColliderBox {
  * keeps queries cheap. Zero allocations after finalize().
  */
 export class WorldCollider {
-  private boxes: ColliderBox[] = [];
+  private boxes: BoxBounds[] = [];
   private grid: Map<string, number[]> = new Map();
   private readonly cell: number = 8;
   private finalized: boolean = false;
+
+  /** Total number of collider boxes registered. */
+  public dumpBoxes(): number {
+    return this.boxes.length;
+  }
+
+  /** Read-only snapshot of all collider boxes for debugging/visualization. */
+  public dumpBounds(): BoxBounds[] {
+    return this.boxes.map((b) => ({ ...b }));
+  }
 
   public addBox(min: THREE.Vector3, max: THREE.Vector3, tag: ColliderTag): void {
     this.boxes.push({

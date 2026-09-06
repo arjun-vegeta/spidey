@@ -88,6 +88,141 @@ describe('SwingPhysics - Realistic Pendulum Web Mechanics', () => {
     expect(velDir.dot(toTarget)).toBeGreaterThan(0.99);
   });
 
+  it('eases out zip speed in the final 5 meters before arrival', () => {
+    // 1. Far target (50m away) - should pull at full zipSpeed (62 m/s)
+    const farTarget = new THREE.Vector3(50, 20, 0);
+    physics.startWebZip(farTarget);
+    physics.update(0.016, new THREE.Vector3(), new THREE.Vector3(), false, false);
+    const farSpeed = physics.velocity.length() / 0.55; // account for 0.55 integration damping
+    expect(farSpeed).toBeCloseTo(physics.zipSpeed, 1);
+
+    // 2. Near target (3.5m away, inside final 5m ease window)
+    const nearTarget = new THREE.Vector3(3.5, 20, 0);
+    physics.startWebZip(nearTarget);
+    physics.update(0.016, new THREE.Vector3(), new THREE.Vector3(), false, false);
+    const nearSpeed = physics.velocity.length() / 0.55;
+    expect(nearSpeed).toBeLessThan(physics.zipSpeed * 0.9);
+    expect(nearSpeed).toBeGreaterThanOrEqual(physics.zipSpeed * 0.45);
+  });
+
+  it('cancels web zip with swing-style forward and vertical boost', () => {
+    const target = new THREE.Vector3(0, 30, 0);
+    physics.startWebZip(target);
+    expect(physics.mode).toBe(MovementMode.WEB_ZIPPING);
+
+    const lookDir = new THREE.Vector3(0, 0, -1);
+    physics.cancelWebZip(lookDir);
+
+    expect(physics.mode).toBe(MovementMode.AIR);
+    expect(physics.zipTarget).toBeNull();
+    // Upward boost (8.0) and forward boost (10.0) along look direction
+    expect(physics.velocity.y).toBeGreaterThanOrEqual(8.0);
+    expect(physics.velocity.z).toBeLessThanOrEqual(-9.0);
+  });
+
+  it('auto-releases web line when slack persists for 0.5s continuously', () => {
+    const anchor = new THREE.Vector3(0, 30, 0);
+    physics.attachWeb(anchor);
+    expect(physics.mode).toBe(MovementMode.SWINGING);
+
+    // Position player directly below anchor closer than rope length (slack)
+    physics.position.set(0, 25, 0); // distance is 5m, ropeLength clamped to min 6m
+    physics.velocity.set(0, 0, 0);
+
+    // Step 0.3s of slack — should still be swinging
+    for (let i = 0; i < 15; i++) {
+      physics.update(0.02, new THREE.Vector3(), new THREE.Vector3(), false, false);
+    }
+    expect(physics.isWebTaut).toBe(false);
+    expect(physics.mode).toBe(MovementMode.SWINGING);
+    expect(physics.slackTimer).toBeGreaterThan(0.25);
+
+    // Step another 0.25s (total > 0.5s) — should auto-release to AIR mode
+    for (let i = 0; i < 15; i++) {
+      physics.update(0.02, new THREE.Vector3(), new THREE.Vector3(), false, false);
+    }
+    expect(physics.mode).toBe(MovementMode.AIR);
+    expect(physics.webAnchor).toBeNull();
+  });
+
+  it('air brake (holding S) bleeds horizontal speed 2x faster than normal flight', () => {
+    // Setup two identical air physics states with high forward horizontal speed
+    const freeAir = new SwingPhysics();
+    freeAir.position.set(0, 100, 0);
+    freeAir.velocity.set(0, 0, -30);
+    freeAir.mode = MovementMode.AIR;
+
+    const brakingAir = new SwingPhysics();
+    brakingAir.position.set(0, 100, 0);
+    brakingAir.velocity.set(0, 0, -30);
+    brakingAir.mode = MovementMode.AIR;
+
+    const dt = 0.05;
+    const lookDir = new THREE.Vector3(0, 0, -1);
+    const zeroInput = new THREE.Vector3(0, 0, 0);
+
+    // Step 5 frames: free air has no braking, brakingAir has braking = true
+    for (let i = 0; i < 5; i++) {
+      freeAir.update(dt, zeroInput, lookDir, false, false, false, false);
+      brakingAir.update(dt, zeroInput, lookDir, false, false, true, false);
+    }
+
+    const freeHorizSpeed = Math.hypot(freeAir.velocity.x, freeAir.velocity.z);
+    const brakingHorizSpeed = Math.hypot(brakingAir.velocity.x, brakingAir.velocity.z);
+
+    // Braking air must have bled significantly more horizontal speed
+    expect(brakingHorizSpeed).toBeLessThan(freeHorizSpeed);
+    expect(freeHorizSpeed - brakingHorizSpeed).toBeGreaterThan(5.0);
+  });
+
+  it('diving in air increases downward speed and forward assist within terminal velocity', () => {
+    physics.position.set(0, 100, 0);
+    physics.velocity.set(0, -10, 0);
+    physics.mode = MovementMode.AIR;
+
+    const lookDir = new THREE.Vector3(0, 0, -1);
+    const dt = 0.05;
+
+    // Normal airborne fall
+    const normal = new SwingPhysics();
+    normal.position.set(0, 100, 0);
+    normal.velocity.set(0, -10, 0);
+    normal.mode = MovementMode.AIR;
+
+    normal.update(dt, new THREE.Vector3(), lookDir, false, false, false, false);
+    physics.update(dt, new THREE.Vector3(), lookDir, false, false, false, true);
+
+    // Diving gains downward speed faster and gains forward momentum
+    expect(physics.velocity.y).toBeLessThan(normal.velocity.y);
+    expect(physics.velocity.z).toBeLessThan(normal.velocity.z);
+
+    // Dive cannot exceed terminal velocity
+    physics.velocity.set(0, -70, 0);
+    physics.update(dt, new THREE.Vector3(), lookDir, false, false, false, true);
+    expect(physics.velocity.length()).toBeLessThanOrEqual(physics.terminalVelocity + 1e-3);
+  });
+
+  it('halves input acceleration response during control damp after hard landing', () => {
+    physics.mode = MovementMode.GROUNDED;
+    physics.isGrounded = true;
+    physics.controlDampTimer = 0.25;
+
+    const inputDir = new THREE.Vector3(0, 0, -1);
+    physics.update(0.016, inputDir, new THREE.Vector3(), false, false);
+    const dampedSpeed = physics.velocity.length();
+
+    // Undamped physics
+    const undamped = new SwingPhysics();
+    undamped.mode = MovementMode.GROUNDED;
+    undamped.isGrounded = true;
+    undamped.controlDampTimer = 0;
+    undamped.update(0.016, inputDir, new THREE.Vector3(), false, false);
+    const undampedSpeed = undamped.velocity.length();
+
+    // Damped acceleration rate should produce approximately half the acceleration
+    expect(dampedSpeed).toBeLessThan(undampedSpeed * 0.7);
+  });
+
   it('resolves ground contact and sets isGrounded flag', () => {
     physics.position.set(0, 0.5, 0);
     physics.velocity.set(0, -10, 0);

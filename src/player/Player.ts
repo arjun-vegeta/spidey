@@ -41,6 +41,9 @@ export class Player {
   // Simplified collision shells (preferred over mesh sampling when bound)
   public worldCollider: WorldCollider | null = null;
   private pushScratch: PushResult = { x: 0, z: 0, nx: 0, nz: 0, pushed: false };
+  private headPushScratch: PushResult = { x: 0, z: 0, nx: 0, nz: 0, pushed: false };
+  private torsoPushScratch: PushResult = { x: 0, z: 0, nx: 0, nz: 0, pushed: false };
+  private _upRay: THREE.Raycaster = new THREE.Raycaster();
 
   // Traversal & stunt score tracking
   public isMidAir: boolean = false;
@@ -169,6 +172,11 @@ export class Player {
       }
     }
 
+    // 0. ADS sensitivity scaling (ratio currentFov/baseFov passed to InputManager)
+    const fovRatio = this.currentFov / this.baseFov;
+    const adsScale = this.isSwinging ? 0 : this.weaponManager.aimProgress;
+    this.input.setAdsScaling(adsScale, fovRatio);
+
     // 1. Mouse look updates
     this.yaw -= this.input.mouseDelta.x;
     this.pitch -= this.input.mouseDelta.y;
@@ -236,14 +244,18 @@ export class Player {
       this.webShooter.triggerWebZip();
     }
 
-    // Jump buffering + coyote time
+    // Jump buffering + coyote time + zip-cancel
     if (this.physics.isGrounded) this.physics.coyoteTimer = 0.12;
     else this.physics.coyoteTimer = Math.max(0, this.physics.coyoteTimer - dt);
     if (this.input.jumpJustPressed) this.physics.jumpBufferTimer = 0.14;
     else this.physics.jumpBufferTimer = Math.max(0, this.physics.jumpBufferTimer - dt);
 
     if (this.physics.jumpBufferTimer > 0) {
-      if (this.isSwinging) {
+      if (this.physics.mode === MovementMode.WEB_ZIPPING) {
+        // Zip-cancel: jump converts zip into forward/upward release boost
+        this.webShooter.cancelWebZip(forward);
+        this.physics.jumpBufferTimer = 0;
+      } else if (this.isSwinging) {
         this.webShooter.releaseWeb(true, forward);
         this.physics.jumpBufferTimer = 0;
       } else if (this.physics.isGrounded || this.physics.coyoteTimer > 0) {
@@ -259,14 +271,29 @@ export class Player {
     this.physics.speedMultiplier = wantAimSlow ? 0.6 : 1.0;
     const isReelingIn = this.input.isReelingIn();
     const isReelingOut = this.input.isReelingOut();
-    this.physics.update(dt, inputDir, forward, isReelingIn, isReelingOut);
+
+    // Airborne control intent: air brake (holding S/back) & dive (holding Ctrl)
+    const isAirborne = !this.physics.isGrounded && this.physics.mode === MovementMode.AIR;
+    const braking = isAirborne && this.input.isMovingBackward();
+    const diving = isAirborne && this.input.isDiving();
+
+    // Downward pitch assist while diving
+    if (diving) {
+      this.pitch = Math.max(-Math.PI / 2.05, this.pitch - 0.5 * dt);
+    }
+
+    this.physics.update(dt, inputDir, forward, isReelingIn, isReelingOut, braking, diving);
 
     // World collision: ground raycast (floors/roofs) + capsule push-out (walls)
     this.resolveWorldCollisions(collidables);
 
-    // Landing dip feel
+    // Landing dip feel & hard landing control damp (>25 m/s fall)
     if (!wasGrounded && this.physics.isGrounded && fallSpeedBefore < -12) {
       this.landingDip = Math.min(0.35, (-fallSpeedBefore - 12) * 0.02);
+      if (fallSpeedBefore < -25) {
+        this.physics.controlDampTimer = 0.25;
+        soundManager.playImpactWall();
+      }
     }
     this.landingDip = THREE.MathUtils.lerp(this.landingDip, 0, dt * 7.0);
 
@@ -426,6 +453,24 @@ export class Player {
       hasWallContact = true;
     }
 
+    // B1. Head-bump: when moving upward and a wall box overlaps the head band but not lower torso
+    if (this.physics.velocity.y > 0) {
+      const headMinY = p.y + halfH - 0.4;
+      const headMaxY = p.y + halfH + 0.3;
+      const headPush = this.headPushScratch;
+      coll.pushOut(p.x, p.z, r * 0.8, headMinY, headMaxY, headPush);
+
+      if (headPush.pushed) {
+        // If the wall does NOT overlap lower torso/feet, player's head hit an overhang/ceiling
+        const torsoPush = this.torsoPushScratch;
+        coll.pushOut(p.x, p.z, r * 0.8, p.y - halfH, p.y + halfH - 0.5, torsoPush);
+        if (!torsoPush.pushed) {
+          this.physics.velocity.y = 0;
+          soundManager.playImpactWall();
+        }
+      }
+    }
+
     // B2. Wall-run entry: airborne + fast + holding forward + side contact
     if (
       hasWallContact &&
@@ -475,6 +520,18 @@ export class Player {
       if (!this.physics.isGrounded && p.y > 3.0 && this.physics.mode === MovementMode.GROUNDED) {
         this.physics.isGrounded = false;
         this.physics.mode = MovementMode.AIR;
+      }
+    }
+
+    // Upward head-bump check against collidable meshes when moving upward
+    if (this.physics.velocity.y > 0) {
+      this._upRay.set(this._closest.set(p.x, p.y + 0.5, p.z), Player.UP);
+      this._upRay.near = 0;
+      this._upRay.far = this.physics.playerHeight * 0.5 + 0.4;
+      const upHits = this._upRay.intersectObjects(collidables, false);
+      if (upHits.length > 0 && upHits[0].distance < this.physics.playerHeight * 0.5 + 0.35) {
+        this.physics.velocity.y = 0;
+        soundManager.playImpactWall();
       }
     }
 

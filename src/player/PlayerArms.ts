@@ -79,6 +79,14 @@ export class PlayerArms {
     const leftPalm = new THREE.Mesh(palmGeom, suitMat);
     leftPalm.position.set(0, 0.05, -0.28);
     leftPalm.add(InkShaderMaterial.createEdgeLines(palmGeom));
+
+    // Knuckle creases: extra edge-line detail across back of hand (reusing suitMat, no new textures)
+    const knuckleCreaseGeom = new THREE.BoxGeometry(0.052, 0.005, 0.016);
+    const leftKnuckleCrease = new THREE.Mesh(knuckleCreaseGeom, suitMat);
+    leftKnuckleCrease.position.set(0, 0.02, -0.018);
+    leftKnuckleCrease.add(InkShaderMaterial.createEdgeLines(knuckleCreaseGeom));
+    leftPalm.add(leftKnuckleCrease);
+
     this.leftHandGroup.add(leftPalm);
 
     // Spider-Man iconic fingers:
@@ -132,6 +140,12 @@ export class PlayerArms {
     const rightPalm = new THREE.Mesh(palmGeom, suitMat);
     rightPalm.position.set(0, 0.04, -0.28);
     rightPalm.add(InkShaderMaterial.createEdgeLines(palmGeom));
+
+    const rightKnuckleCrease = new THREE.Mesh(knuckleCreaseGeom, suitMat);
+    rightKnuckleCrease.position.set(0, 0.02, -0.018);
+    rightKnuckleCrease.add(InkShaderMaterial.createEdgeLines(knuckleCreaseGeom));
+    rightPalm.add(rightKnuckleCrease);
+
     this.rightHandGroup.add(rightPalm);
 
     // Curled fingers wrapped around weapon grip

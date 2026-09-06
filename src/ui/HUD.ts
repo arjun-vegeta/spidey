@@ -43,9 +43,17 @@ export class HUD {
   private scopeOverlayElement!: HTMLElement;
   private webReticleElement!: HTMLElement;
   private centerCrosshairElement!: HTMLElement;
+  private spreadRingElement!: HTMLElement;
+  private chTickTop!: HTMLElement;
+  private chTickBottom!: HTMLElement;
+  private chTickLeft!: HTMLElement;
+  private chTickRight!: HTMLElement;
   private hitmarkerElement!: HTMLElement;
   private popupContainerElement!: HTMLElement;
   private announcementElement!: HTMLElement;
+  private announcementCompElement!: HTMLElement;
+  private reloadBarBox!: HTMLElement;
+  private reloadBarFill!: HTMLElement;
 
   private hitmarkerTimer: number = 0;
   private isHeadshotHit: boolean = false;
@@ -54,6 +62,8 @@ export class HUD {
   private lastScoreText: string = '';
   private lastWaveText: string = '';
   private lastPreviewText: string = '';
+  private lastHp: number = 100;
+  private healFlashTimer: number = 0;
 
   // Minimap + directional damage state
   private minimap: Minimap | null = null;
@@ -79,6 +89,7 @@ export class HUD {
   // Pause / settings callbacks (wired by Game, HUD never imports Game)
   public onResumeRequest?: () => void;
   public onRestartRequest?: () => void;
+  public onQuitRequest?: () => void;
   public onSettingsChanged?: (s: SettingsData) => void;
 
   private buildDOM(): void {
@@ -118,6 +129,7 @@ export class HUD {
             <path d="M 31 17.1 A 38 38 0 0 1 69 17.1" fill="none" stroke="#d63031" stroke-width="7" stroke-linecap="round"/>
           </g>
         </svg>
+        <div id="spread-ring" class="spread-ring"></div>
         <div id="center-crosshair" class="crosshair-default">
           <div class="ch-dot"></div>
           <div class="ch-tick ch-top"></div>
@@ -146,6 +158,9 @@ export class HUD {
         <div class="ammo-container">
           <div id="ammo-numbers" class="ammo-numbers-text">12<span class="ammo-sub">/60</span></div>
           <div id="ammo-tallies" class="ammo-tallies-text">|||| |||| ||</div>
+          <div id="reload-bar-box" class="reload-bar-box" style="display:none">
+            <div id="reload-bar-fill" class="reload-bar-fill"></div>
+          </div>
         </div>
       </div>
 
@@ -165,6 +180,7 @@ export class HUD {
       <div id="hud-announcement" class="hud-announcement-banner">
         <div class="announcement-title">WAVE 1</div>
         <div class="announcement-subtitle">INK INVASION BEGINS</div>
+        <div class="announcement-comp"></div>
       </div>
 
       <!-- Bottom-center minimap -->
@@ -192,7 +208,15 @@ export class HUD {
           <div class="pause-sub">the sketch waits for no one (except now)</div>
           <button id="resume-btn" class="play-prompt-btn pause-btn">RESUME</button>
           <button id="restart-btn" class="play-prompt-btn pause-btn pause-btn-red">RESTART</button>
+          <button id="quit-btn" class="play-prompt-btn pause-btn pause-btn-quit">QUIT TO MENU</button>
           <label class="pause-row">SENSITIVITY <input id="set-sens" type="range" min="0.5" max="2" step="0.05"><span id="set-sens-v"></span></label>
+          <div class="pause-note">Default 0.80x tuned for trackpads · adjust for mouse</div>
+          <label class="pause-row">QUALITY
+            <select id="set-quality" class="pause-select">
+              <option value="high">HIGH (DPR 2, 800 FX)</option>
+              <option value="low">LOW (DPR 1, 400 FX)</option>
+            </select>
+          </label>
           <label class="pause-row">VOLUME <input id="set-vol" type="range" min="0" max="1" step="0.05"><span id="set-vol-v"></span></label>
           <label class="pause-row">FOV <input id="set-fov" type="range" min="70" max="90" step="1"><span id="set-fov-v"></span></label>
           <label class="pause-row pause-check"><input id="set-map" type="checkbox"> MINIMAP (N)</label>
@@ -209,6 +233,8 @@ export class HUD {
     this.hpBarCrosshatch = this.container.querySelector('#hp-bar-hatch')!;
     this.ammoElement = this.container.querySelector('#ammo-numbers')!;
     this.tallyMarksElement = this.container.querySelector('#ammo-tallies')!;
+    this.reloadBarBox = this.container.querySelector('#reload-bar-box')!;
+    this.reloadBarFill = this.container.querySelector('#reload-bar-fill')!;
     this.weaponListElement = this.container.querySelector('#weapon-list')!;
     this.activeWeaponNameElement = this.container.querySelector('#active-wep-name')!;
     this.activeWeaponDescElement = this.container.querySelector('#active-wep-desc')!;
@@ -218,9 +244,15 @@ export class HUD {
     this.scopeOverlayElement = this.container.querySelector('#scope-overlay')!;
     this.webReticleElement = this.container.querySelector('#web-reticle')!;
     this.centerCrosshairElement = this.container.querySelector('#center-crosshair')!;
+    this.spreadRingElement = this.container.querySelector('#spread-ring')!;
+    this.chTickTop = this.container.querySelector('.ch-top')!;
+    this.chTickBottom = this.container.querySelector('.ch-bottom')!;
+    this.chTickLeft = this.container.querySelector('.ch-left')!;
+    this.chTickRight = this.container.querySelector('.ch-right')!;
     this.hitmarkerElement = this.container.querySelector('#hitmarker')!;
     this.popupContainerElement = this.container.querySelector('#popup-container')!;
     this.announcementElement = this.container.querySelector('#hud-announcement')!;
+    this.announcementCompElement = this.container.querySelector('.announcement-comp')!;
     this.wavePreviewEl = this.container.querySelector('#wave-preview');
     this.dmgArcG = this.container.querySelector('#dmg-arc-g') as unknown as SVGGElement;
     this.dmgEdgeT = this.container.querySelector('#dmg-edge-t');
@@ -252,15 +284,24 @@ export class HUD {
     if (resume) resume.addEventListener('click', (e) => { e.stopPropagation(); if (this.onResumeRequest) this.onResumeRequest(); });
     const restart = this.container.querySelector('#restart-btn');
     if (restart) restart.addEventListener('click', (e) => { e.stopPropagation(); if (this.onRestartRequest) this.onRestartRequest(); });
+    const quit = this.container.querySelector('#quit-btn');
+    if (quit) quit.addEventListener('click', (e) => { e.stopPropagation(); if (this.onQuitRequest) this.onQuitRequest(); });
 
     const sens = this.container.querySelector('#set-sens') as HTMLInputElement | null;
     const vol = this.container.querySelector('#set-vol') as HTMLInputElement | null;
     const fov = this.container.querySelector('#set-fov') as HTMLInputElement | null;
     const map = this.container.querySelector('#set-map') as HTMLInputElement | null;
+    const qual = this.container.querySelector('#set-quality') as HTMLSelectElement | null;
+    const modalSens = document.querySelector('#modal-sens') as HTMLInputElement | null;
+    const modalMute = document.querySelector('#modal-mute') as HTMLInputElement | null;
+
     if (sens) sens.value = String(this.settings.sensitivity);
     if (vol) vol.value = String(this.settings.volume);
     if (fov) fov.value = String(this.settings.fov);
     if (map) map.checked = this.settings.minimap;
+    if (qual) qual.value = this.settings.quality;
+    if (modalSens) modalSens.value = String(this.settings.sensitivity);
+    if (modalMute) modalMute.checked = this.settings.muted;
     this.refreshSettingLabels();
 
     const emit = () => {
@@ -268,20 +309,63 @@ export class HUD {
       if (vol) this.settings.volume = parseFloat(vol.value);
       if (fov) this.settings.fov = parseInt(fov.value, 10);
       if (map) this.settings.minimap = map.checked;
+      if (qual) this.settings.quality = qual.value === 'low' ? 'low' : 'high';
+      if (modalSens) modalSens.value = String(this.settings.sensitivity);
       this.refreshSettingLabels();
       if (this.onSettingsChanged) this.onSettingsChanged({ ...this.settings });
     };
+
     for (const el of [sens, vol, fov, map]) {
       if (el) el.addEventListener('input', emit);
     }
+    if (qual) qual.addEventListener('change', emit);
+
+    if (modalSens) {
+      modalSens.addEventListener('input', () => {
+        this.settings.sensitivity = parseFloat(modalSens.value);
+        if (sens) sens.value = String(this.settings.sensitivity);
+        this.refreshSettingLabels();
+        if (this.onSettingsChanged) this.onSettingsChanged({ ...this.settings });
+      });
+    }
+
+    if (modalMute) {
+      modalMute.addEventListener('change', () => {
+        this.settings.muted = modalMute.checked;
+        this.refreshSettingLabels();
+        if (this.onSettingsChanged) this.onSettingsChanged({ ...this.settings });
+      });
+    }
+  }
+
+  public syncSettings(s: SettingsData): void {
+    this.settings = { ...s };
+    const sens = this.container.querySelector('#set-sens') as HTMLInputElement | null;
+    const vol = this.container.querySelector('#set-vol') as HTMLInputElement | null;
+    const fov = this.container.querySelector('#set-fov') as HTMLInputElement | null;
+    const map = this.container.querySelector('#set-map') as HTMLInputElement | null;
+    const qual = this.container.querySelector('#set-quality') as HTMLSelectElement | null;
+    if (sens) sens.value = String(this.settings.sensitivity);
+    if (vol) vol.value = String(this.settings.volume);
+    if (fov) fov.value = String(this.settings.fov);
+    if (map) map.checked = this.settings.minimap;
+    if (qual) qual.value = this.settings.quality;
+
+    const modalSens = document.querySelector('#modal-sens') as HTMLInputElement | null;
+    const modalMute = document.querySelector('#modal-mute') as HTMLInputElement | null;
+    if (modalSens) modalSens.value = String(this.settings.sensitivity);
+    if (modalMute) modalMute.checked = this.settings.muted;
+
+    this.refreshSettingLabels();
   }
 
   private refreshSettingLabels(): void {
     const set = (id: string, text: string) => {
-      const el = this.container.querySelector(id);
+      const el = this.container.querySelector(id) || document.querySelector(id);
       if (el) el.textContent = text;
     };
     set('#set-sens-v', this.settings.sensitivity.toFixed(2) + 'x');
+    set('#modal-sens-v', this.settings.sensitivity.toFixed(2) + 'x');
     set('#set-vol-v', Math.round(this.settings.volume * 100) + '%');
     set('#set-fov-v', String(Math.round(this.settings.fov)));
   }
@@ -302,6 +386,9 @@ export class HUD {
   }
 
   public showScorePopup(text: string, points: number, color: string = '#152778'): void {
+    while (this.scorePopups.length >= 4) {
+      this.scorePopups.shift();
+    }
     this.scorePopups.push({
       text,
       points,
@@ -312,23 +399,52 @@ export class HUD {
     });
   }
 
-  public triggerHitmarker(isHeadshot: boolean = false): void {
-    this.hitmarkerTimer = 0.18;
-    this.isHeadshotHit = isHeadshot;
-    if (this.hitmarkerElement) {
-      this.hitmarkerElement.textContent = isHeadshot ? '!' : '✕';
-      this.hitmarkerElement.style.color = isHeadshot ? '#d63031' : '#152778';
-      this.hitmarkerElement.style.transform = isHeadshot ? 'scale(1.8)' : 'scale(1.3)';
-      this.hitmarkerElement.style.opacity = '1';
+  public triggerHitmarker(isHeadshot: boolean = false, killed: boolean = false): void {
+    if (killed) {
+      this.hitmarkerTimer = 0.5;
+      this.isHeadshotHit = isHeadshot;
+      if (this.hitmarkerElement) {
+        this.hitmarkerElement.textContent = '×!';
+        this.hitmarkerElement.style.color = isHeadshot ? '#d63031' : '#152778';
+        this.hitmarkerElement.style.transform = 'scale(1.6)';
+        this.hitmarkerElement.style.opacity = '1';
+      }
+    } else {
+      this.hitmarkerTimer = 0.18;
+      this.isHeadshotHit = isHeadshot;
+      if (this.hitmarkerElement) {
+        this.hitmarkerElement.textContent = isHeadshot ? '!' : '✕';
+        this.hitmarkerElement.style.color = isHeadshot ? '#d63031' : '#152778';
+        this.hitmarkerElement.style.transform = isHeadshot ? 'scale(1.8)' : 'scale(1.3)';
+        this.hitmarkerElement.style.opacity = '1';
+      }
     }
   }
 
-  public showWaveAnnouncement(waveNum: number, subtitle: string = 'ELIMINATE ALL INK HOSTILES'): void {
+  public showWaveAnnouncement(
+    waveNum: number,
+    subtitle: string = 'ELIMINATE ALL INK HOSTILES',
+    comp?: { thugs: number; snipers: number; drones: number }
+  ): void {
     if (!this.announcementElement) return;
     const titleEl = this.announcementElement.querySelector('.announcement-title') as HTMLElement;
     const subEl = this.announcementElement.querySelector('.announcement-subtitle') as HTMLElement;
     if (titleEl) titleEl.textContent = `WAVE ${waveNum}`;
     if (subEl) subEl.textContent = subtitle;
+
+    if (this.announcementCompElement) {
+      if (comp) {
+        const chips: string[] = [];
+        if (comp.thugs > 0) chips.push(`<span class="comp-chip"><span class="chip-shape shape-thug"></span>${comp.thugs} THUG</span>`);
+        if (comp.drones > 0) chips.push(`<span class="comp-chip"><span class="chip-shape shape-drone"></span>${comp.drones} DRONE</span>`);
+        if (comp.snipers > 0) chips.push(`<span class="comp-chip"><span class="chip-shape shape-sniper"></span>${comp.snipers} SNIPER</span>`);
+        this.announcementCompElement.innerHTML = chips.join('<span class="comp-sep">·</span>');
+        this.announcementCompElement.style.display = chips.length > 0 ? 'flex' : 'none';
+      } else {
+        this.announcementCompElement.innerHTML = '';
+        this.announcementCompElement.style.display = 'none';
+      }
+    }
 
     this.announcementElement.classList.add('visible');
     this.announcementTimer = 2.8;
@@ -416,8 +532,20 @@ export class HUD {
       this.enemiesLeftElement.textContent = leftText;
     }
 
-    // 3. Health bar (crosshatched bar width)
+    // 3. Health bar (crosshatched bar width) + heal flash
     const hp = Math.max(0, player.health);
+    if (hp > this.lastHp) {
+      this.healFlashTimer = 0.4;
+    }
+    this.lastHp = hp;
+
+    if (this.healFlashTimer > 0) {
+      this.healFlashTimer -= dt;
+      this.hpBarCrosshatch.classList.add('hp-heal-flash');
+    } else {
+      this.hpBarCrosshatch.classList.remove('hp-heal-flash');
+    }
+
     this.hpNumberElement.textContent = Math.ceil(hp).toString();
     this.hpBarCrosshatch.style.width = `${hp}%`;
     if (hp < 30) {
@@ -432,12 +560,14 @@ export class HUD {
     const isSwinging = player.isSwinging;
 
     if (activeWep.isReloading) {
-      if (this.lastAmmoText !== 'R') {
-        this.ammoElement.textContent = `RELOADING...`;
-        this.tallyMarksElement.textContent = ``;
-        this.lastAmmoText = 'R';
-      }
+      this.ammoElement.textContent = `RELOADING...`;
+      this.tallyMarksElement.textContent = ``;
+      this.reloadBarBox.style.display = 'block';
+      const reloadPct = Math.min(100, Math.max(0, (activeWep.reloadProgress / Math.max(0.01, activeWep.reloadTime)) * 100));
+      this.reloadBarFill.style.width = `${reloadPct.toFixed(1)}%`;
+      this.lastAmmoText = 'R';
     } else {
+      this.reloadBarBox.style.display = 'none';
       const ammoKey = `${activeWep.currentAmmo}/${activeWep.reserveAmmo}`;
       if (ammoKey !== this.lastAmmoText) {
         this.ammoElement.innerHTML = `${activeWep.currentAmmo}<span class="ammo-sub">/${activeWep.reserveAmmo}</span>`;
@@ -493,19 +623,38 @@ export class HUD {
       this.webReticleElement.classList.remove('active');
     }
 
-    // 6. Sniper Scope
+    // 6. Sniper Scope & Dynamic Crosshair Spread Ring
     const isSniperScoped = activeWep.type === 'sniper' && (activeWep as Sniper).isScoped;
+    const isAiming = player.input.isZoomHolding() && !player.isSwinging;
+
     if (isSniperScoped) {
       this.scopeOverlayElement.classList.add('active');
       this.centerCrosshairElement.style.opacity = '0';
+      this.spreadRingElement.style.opacity = '0';
     } else {
       this.scopeOverlayElement.classList.remove('active');
       this.centerCrosshairElement.style.opacity = '1';
+      this.spreadRingElement.style.opacity = '1';
+
+      const isMoving = player.input.isMovingForward() || player.input.isMovingBackward() || player.input.isMovingLeft() || player.input.isMovingRight();
+      const spreadRad = activeWep.spreadFor(isMoving, isAiming, isSwinging);
+      const focalConstant = 550;
+      const spreadRadius = Math.max(6, Math.round(spreadRad * focalConstant));
+
+      this.spreadRingElement.style.width = `${spreadRadius * 2}px`;
+      this.spreadRingElement.style.height = `${spreadRadius * 2}px`;
+
+      // Expand crosshair ticks with live spread value
+      const tickOffset = spreadRadius + 2;
+      this.chTickTop.style.top = `calc(50% - ${tickOffset + 6}px)`;
+      this.chTickBottom.style.bottom = `calc(50% - ${tickOffset + 6}px)`;
+      this.chTickLeft.style.left = `calc(50% - ${tickOffset + 6}px)`;
+      this.chTickRight.style.right = `calc(50% - ${tickOffset + 6}px)`;
     }
 
-    // 7. Speed lines based on velocity
+    // 7. Speed lines based on velocity (hidden while ADS / scoped)
     const speed = player.velocity.length();
-    if (speed > 20) {
+    if (!isAiming && !isSniperScoped && speed > 20) {
       const speedAlpha = Math.min((speed - 20) / 22.0, 0.85);
       this.speedLinesElement.style.opacity = speedAlpha.toString();
     } else {
@@ -555,16 +704,21 @@ export class HUD {
   private updateDamageDirection(player: Player): void {
     const age = performance.now() * 0.001 - this.lastDmgAt;
     const fade = age < 1.2 ? 1 - age / 1.2 : 0;
+    const hp = Math.max(0, player.health);
+    const lowHpPulse = (hp < 30 && !player.isDead)
+      ? (Math.sin(performance.now() * 0.0035) * 0.5 + 0.5) * 0.32
+      : 0;
+
     if (fade <= 0 || !this.dmgArcG) {
       if (this.dmgArcG) this.dmgArcG.setAttribute('opacity', '0');
-      this.setEdgeOpacities(0, 0, 0, 0);
+      this.setEdgeOpacities(lowHpPulse, lowHpPulse, lowHpPulse, lowHpPulse);
       return;
     }
     const dx = this.lastDmgX - player.position.x;
     const dz = this.lastDmgZ - player.position.z;
     if (dx * dx + dz * dz < 0.25) {
       this.dmgArcG.setAttribute('opacity', '0');
-      this.setEdgeOpacities(0, 0, 0, 0);
+      this.setEdgeOpacities(lowHpPulse, lowHpPulse, lowHpPulse, lowHpPulse);
       return;
     }
     const len = Math.hypot(dx, dz);
@@ -582,7 +736,17 @@ export class HUD {
     this.dmgArcG.setAttribute('opacity', (fade * 0.95).toFixed(2));
     const c = Math.cos(rel) * fade;
     const s = Math.sin(rel) * fade;
-    this.setEdgeOpacities(Math.max(0, c), Math.max(0, -c), Math.max(0, -s), Math.max(0, s));
+
+    // Directional indicator wins while fresh; low-HP pulse blends in as directional hit fades
+    const dirWeight = Math.min(1, fade * 1.5);
+    const pulseBlend = lowHpPulse * (1 - dirWeight);
+
+    this.setEdgeOpacities(
+      Math.max(0, c) + pulseBlend,
+      Math.max(0, -c) + pulseBlend,
+      Math.max(0, -s) + pulseBlend,
+      Math.max(0, s) + pulseBlend
+    );
   }
 
   private setEdgeOpacities(t: number, b: number, l: number, r: number): void {

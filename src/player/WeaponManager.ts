@@ -28,6 +28,14 @@ export class WeaponManager {
   public switchTimer: number = 0;
   public readonly switchTime: number = 0.25;
 
+  // 1-frame muzzle hand-light pulse timer
+  public muzzleFlashTimer: number = 0;
+
+  // SMG horizontal drift: random walk that accumulates while trigger is held
+  public smgBurstShots: number = 0;
+  public smgHorizontalDrift: number = 0;
+  public timeSinceLastFire: number = 0;
+
   constructor() {
     this.weapons = [
       new Pistol(),
@@ -53,11 +61,12 @@ export class WeaponManager {
       return false;
     }
 
-    // Holster current (reload cancelled, scope dropped)
+    // Holster current (reload cancelled, scope dropped, muzzle flash reset)
     const old = this.weapons[this.activeIndex];
     old.modelGroup.visible = false;
     old.isReloading = false;
     old.reloadProgress = 0;
+    old.setMuzzleFlash(false);
     if (old.type === 'sniper') {
       (old as Sniper).isScoped = false;
     }
@@ -68,6 +77,9 @@ export class WeaponManager {
     nextWep.lastFireTime = -10;
 
     this.switchTimer = this.switchTime;
+    this.muzzleFlashTimer = 0;
+    this.smgBurstShots = 0;
+    this.smgHorizontalDrift = 0;
     soundManager.playWeaponSwitch();
     this.positionWeaponModel();
     return true;
@@ -132,6 +144,9 @@ export class WeaponManager {
 
     const result = wep.fire(currentTime, origin, direction, isSwinging, raycastTargets, opts);
     if (result) {
+      this.timeSinceLastFire = 0;
+      this.muzzleFlashTimer = 1; // 1-frame muzzle pulse on weapon materials
+
       // Play weapon-specific audio
       switch (wep.type) {
         case 'pistol':
@@ -146,11 +161,20 @@ export class WeaponManager {
       }
 
       // Add punchy physical recoil kick
-      const kick = wep.recoilAmount * (this.aimProgress > 0.5 ? 0.65 : 1.0);
+      const adsMultiplier = this.aimProgress > 0.5 ? 0.65 : 1.0;
+      const kick = wep.recoilAmount * adsMultiplier;
       this.recoilPos.z += kick * 0.4;
       this.recoilPos.y += kick * 0.12;
       this.recoilRot.x += kick * 0.75;
       this.recoilRot.y += (Math.random() - 0.5) * kick * 0.2;
+
+      // Mission 2 [12.2]: SMG horizontal drift: random walk that grows while held, keeps ADS 0.65x
+      if (wep.type === 'smg') {
+        this.smgBurstShots++;
+        const driftStep = (Math.random() - 0.5) * 0.0035 * Math.min(this.smgBurstShots, 20);
+        this.smgHorizontalDrift += driftStep;
+        this.recoilRot.y += this.smgHorizontalDrift * adsMultiplier;
+      }
     }
 
     return result;
@@ -161,6 +185,8 @@ export class WeaponManager {
     const started = wep.startReload();
     if (started) {
       soundManager.playReload();
+      this.smgBurstShots = 0;
+      this.smgHorizontalDrift = 0;
     }
     return started;
   }
@@ -171,8 +197,13 @@ export class WeaponManager {
       w.reserveAmmo = w.maxReserveAmmo;
       w.isReloading = false;
       w.reloadProgress = 0;
+      w.setMuzzleFlash(false);
     }
     this.switchTimer = 0;
+    this.muzzleFlashTimer = 0;
+    this.smgBurstShots = 0;
+    this.smgHorizontalDrift = 0;
+    this.timeSinceLastFire = 0;
     this.recoilPos.set(0, 0, 0);
     this.recoilRot.set(0, 0, 0);
     this.aimProgress = 0;
@@ -188,6 +219,21 @@ export class WeaponManager {
     const wep = this.activeWeapon;
     wep.updateReload(dt);
     if (this.switchTimer > 0) this.switchTimer = Math.max(0, this.switchTimer - dt);
+
+    // Track firing release to reset SMG horizontal drift
+    this.timeSinceLastFire += dt;
+    if (this.timeSinceLastFire > 0.15) {
+      this.smgBurstShots = 0;
+      this.smgHorizontalDrift = 0;
+    }
+
+    // 1-frame muzzle flash handling
+    if (this.muzzleFlashTimer > 0) {
+      wep.setMuzzleFlash(true);
+      this.muzzleFlashTimer--;
+    } else {
+      wep.setMuzzleFlash(false);
+    }
 
     // Smoothly recover from recoil kick
     this.recoilPos.lerp(this.tmpZero, Math.min(1, dt * this.recoilRecoveryRate));
@@ -247,6 +293,18 @@ export class WeaponManager {
       const bobMagnitude = isMoving ? Math.min(moveSpeed * 0.003, 0.018) : 0.003;
       baseOffset.y = Math.sin(time * 2) * bobMagnitude;
       baseOffset.x = Math.cos(time) * (bobMagnitude * 0.5);
+    }
+
+    // Mission 4 [13]: Reload performance: while isReloading, tilt + dip weapon
+    // Progress-driven: dip down first half (0 -> 0.5), rise second half (0.5 -> 1.0)
+    // Monotonically dips on [0, 0.5] and monotonically rises on [0.5, 1.0].
+    if (wep.isReloading && wep.reloadTime > 0) {
+      const progress = Math.min(1.0, Math.max(0.0, wep.reloadProgress / wep.reloadTime));
+      const dipFactor = Math.sin(progress * Math.PI);
+      baseOffset.y -= 0.14 * dipFactor;
+      baseOffset.z -= 0.04 * dipFactor;
+      baseRot.x -= 0.28 * dipFactor;
+      baseRot.z += 0.22 * dipFactor;
     }
 
     // Apply base positions and add offsets + recoil

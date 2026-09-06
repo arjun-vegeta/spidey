@@ -3,6 +3,9 @@ import { InkShaderMaterial } from '../shaders/InkShaderMaterial';
 import { ConstructionSite } from './ConstructionSite';
 import { WebAnchor } from '../player/SwingPhysics';
 import { WorldCollider } from './WorldCollider';
+import { LANDABLE_TRIM } from './LandableTrim';
+
+export { LANDABLE_TRIM } from './LandableTrim';
 
 export interface SkyscraperConfig {
   x: number;
@@ -48,6 +51,7 @@ export class CityBuilder {
   private worldCollider: WorldCollider | null = null;
   private mapBuildingList: Array<{ x: number; z: number; w: number; d: number }> = [];
   private balconySpecs: Array<{ cx: number; cy: number; cz: number; hw: number; hd: number; nx: number; nz: number }> = [];
+  private terraceHvacSpecs: Array<{ cx: number; cy: number; cz: number; w: number; h: number; d: number }> = [];
   private glintMat: THREE.MeshBasicMaterial | null = null;
   private glintGeom: THREE.OctahedronGeometry | null = null;
 
@@ -62,6 +66,7 @@ export class CityBuilder {
   private accentMat: THREE.ShaderMaterial;
   private cloudMat: THREE.ShaderMaterial;
   private silhouetteMat: THREE.ShaderMaterial;
+  private landableTrimMat: THREE.ShaderMaterial;
 
   constructor() {
     this.group = new THREE.Group();
@@ -78,6 +83,7 @@ export class CityBuilder {
     this.accentMat = InkShaderMaterial.create({ isAccent: true });
     this.cloudMat = InkShaderMaterial.create();
     this.silhouetteMat = InkShaderMaterial.create({ inkColor: new THREE.Color(0x3a4b7c) });
+    this.landableTrimMat = InkShaderMaterial.create({ inkColor: LANDABLE_TRIM });
 
     this.materials.push(
       this.facadeMat,
@@ -89,7 +95,8 @@ export class CityBuilder {
       this.metalMat,
       this.accentMat,
       this.cloudMat,
-      this.silhouetteMat
+      this.silhouetteMat,
+      this.landableTrimMat
     );
 
     // 2. Instantiate and add ConstructionSite at center
@@ -99,6 +106,10 @@ export class CityBuilder {
     // Merge construction site collidables and grapple points
     this.collidableMeshes.push(...this.constructionSite.getCollidableMeshes());
     this.webAnchors.push(...this.constructionSite.getGrapplePoints());
+
+    // Filter out any anchors within 3m of the crane hook (moving/non-landable)
+    const hookPos = new THREE.Vector3(19.0, 27.3, -2.0);
+    this.webAnchors = this.webAnchors.filter((a) => a.distanceTo(hookPos) > 3.0);
 
     // 3. Build city elements
     this.buildGroundAndStreets();
@@ -231,6 +242,29 @@ export class CityBuilder {
     const wWall = this.addMeshWithEdges(streetsGroup, eWallGeom, this.groundMat, InkShaderMaterial.defaultInkColor, true);
     wWall.position.set(-halfCity + wallThick * 0.5, wallHeight * 0.5, 0);
 
+    // 7. [9.6] Torn-paper edge: thin accent stripe along the top of the 4 perimeter walls
+    const stripeH = 0.25;
+    const stripeT = wallThick + 0.2;
+    const stripeY = wallHeight + stripeH * 0.5;
+
+    // North wall stripe
+    const nsStripeGeom = new THREE.BoxGeometry(citySize, stripeH, stripeT);
+    const nStripe = this.addMeshWithEdges(streetsGroup, nsStripeGeom, this.accentMat, InkShaderMaterial.defaultAccentColor, false);
+    nStripe.position.set(0, stripeY, halfCity - wallThick * 0.5);
+
+    // South wall stripe
+    const sStripe = this.addMeshWithEdges(streetsGroup, nsStripeGeom, this.accentMat, InkShaderMaterial.defaultAccentColor, false);
+    sStripe.position.set(0, stripeY, -halfCity + wallThick * 0.5);
+
+    // East wall stripe
+    const ewStripeGeom = new THREE.BoxGeometry(stripeT, stripeH, citySize);
+    const eStripe = this.addMeshWithEdges(streetsGroup, ewStripeGeom, this.accentMat, InkShaderMaterial.defaultAccentColor, false);
+    eStripe.position.set(halfCity - wallThick * 0.5, stripeY, 0);
+
+    // West wall stripe
+    const wStripe = this.addMeshWithEdges(streetsGroup, ewStripeGeom, this.accentMat, InkShaderMaterial.defaultAccentColor, false);
+    wStripe.position.set(-halfCity + wallThick * 0.5, stripeY, 0);
+
     this.group.add(streetsGroup);
   }
 
@@ -337,14 +371,14 @@ export class CityBuilder {
       {
         x: -15.0,
         z: 140.0,
-        width: 30.0,
-        depth: 28.0,
+        width: 32.0,
+        depth: 30.0,
         height: 125.0,
         hasWaterTower: false,
         hasHvac: true,
         hasAntenna: true,
         setbackHeight: 80.0,
-        setbackScale: 0.65,
+        setbackScale: 0.60,
         style: 'artdeco'
       },
       // 9. North-5: Residential high-rise
@@ -401,14 +435,14 @@ export class CityBuilder {
       {
         x: -15.0,
         z: -140.0,
-        width: 30.0,
-        depth: 28.0,
+        width: 32.0,
+        depth: 30.0,
         height: 130.0,
         hasWaterTower: false,
         hasHvac: true,
         hasAntenna: true,
         setbackHeight: 85.0,
-        setbackScale: 0.62,
+        setbackScale: 0.58,
         style: 'artdeco'
       },
       // 14. South-5: High-rise apartment tower
@@ -465,14 +499,14 @@ export class CityBuilder {
       {
         x: 130.0,
         z: 25.0,
-        width: 32.0,
-        depth: 30.0,
+        width: 34.0,
+        depth: 32.0,
         height: 118.0,
         hasWaterTower: false,
         hasHvac: true,
         hasAntenna: true,
         setbackHeight: 78.0,
-        setbackScale: 0.68,
+        setbackScale: 0.60,
         style: 'artdeco'
       },
       // 19. Far-East-2: Outer avenue mid-tall
@@ -565,6 +599,58 @@ export class CityBuilder {
       }
     }
 
+    // Skybridge deck floor shell (-35 to -13 at y=15.0..15.4)
+    coll.addBoxCoords(-35, 15.0, -1.6, -13, 15.4, 1.6, 'floor');
+    // Skybridge side railings (North & South)
+    coll.addBoxCoords(-35, 15.4, -1.65, -13, 16.6, -1.45, 'wall');
+    coll.addBoxCoords(-35, 15.4, 1.45, -13, 16.6, 1.65, 'wall');
+
+    // Construction site Floor 3 West railings (north and south of bridge opening)
+    coll.addBoxCoords(-13.1, 15.5, 1.6, -12.8, 16.6, 10.0, 'wall');
+    coll.addBoxCoords(-13.1, 15.5, -10.0, -12.8, 16.6, -1.6, 'wall');
+
+    // Connected Adjacent Building (B1) skybridge dock steps:
+    // Connects skybridge deck (15.4) to B1 terrace roof (18.0) without jumping
+    coll.addBoxCoords(-37, 15.8, -1.8, -35, 16.25, 1.8, 'floor');
+    coll.addBoxCoords(-39, 16.6, -1.8, -37, 17.1, 1.8, 'floor');
+    coll.addBoxCoords(-41, 17.5, -1.8, -39, 18.0, 1.8, 'floor');
+
+    // Stepping stones mid-air near spawn (0, 4, 18)
+    for (const s of this.constructionSite.getSteppingStoneBounds()) {
+      coll.addBoxCoords(s.minX, s.minY, s.minZ, s.maxX, s.maxY, s.maxZ, 'floor');
+    }
+
+    // Terrace HVAC props (chest cover + step platform)
+    for (const h of this.terraceHvacSpecs) {
+      const hw = h.w * 0.5;
+      const hd = h.d * 0.5;
+      coll.addBoxCoords(h.cx - hw, h.cy, h.cz - hd, h.cx + hw, h.cy + h.h, h.cz + hd, 'wall');
+      coll.addBoxCoords(h.cx - hw, h.cy + h.h - 0.2, h.cz - hd, h.cx + hw, h.cy + h.h, h.cz + hd, 'floor');
+    }
+
+    // Street cover barriers & crates around site perimeter
+    const streetBarriers: Array<[number, number, number, number]> = [
+      [-6.0, 0.5, -15.0, 0], [0.0, 0.5, -15.0, 0], [6.0, 0.5, -15.0, 0],
+      [-5.0, 0.5, 15.0, 0], [2.0, 0.5, 15.0, 0], [8.0, 0.5, 15.0, 0],
+      [15.0, 0.5, -3.0, 1], [15.0, 0.5, 3.0, 1],
+    ];
+    for (const [bx, by, bz, rot] of streetBarriers) {
+      const bw = rot ? 0.7 : 3.0;
+      const bd = rot ? 3.0 : 0.7;
+      coll.addBoxCoords(bx - bw * 0.5, by, bz - bd * 0.5, bx + bw * 0.5, by + 1.0, bz + bd * 0.5, 'wall');
+      coll.addBoxCoords(bx - bw * 0.5, by + 0.8, bz - bd * 0.5, bx + bw * 0.5, by + 1.0, bz + bd * 0.5, 'floor');
+    }
+
+    const streetCrates: Array<[number, number, number, number]> = [
+      [-4.0, 0.5, -16.5, 1.4], [5.0, 0.5, -16.0, 1.5],
+      [3.0, 0.5, 16.5, 1.3], [15.5, 0.5, 0.0, 1.4]
+    ];
+    for (const [cx, cy, cz, cs] of streetCrates) {
+      const hs = cs * 0.5;
+      coll.addBoxCoords(cx - hs, cy, cz - hs, cx + hs, cy + cs, cz + hs, 'wall');
+      coll.addBoxCoords(cx - hs, cy + cs - 0.2, cz - hs, cx + hs, cy + cs, cz + hs, 'floor');
+    }
+
     // Balcony shells: standable floors + leanable outer rails
     for (const b of this.balconySpecs) {
       coll.addBoxCoords(b.cx - b.hw, b.cy - 0.3, b.cz - b.hd, b.cx + b.hw, b.cy, b.cz + b.hd, 'floor');
@@ -630,6 +716,41 @@ export class CityBuilder {
         new THREE.Vector3(config.x, baseH, config.z + depth * 0.5)
       );
 
+      // 4 Setback corner latches with ink glints
+      for (const sx of [-1, 1]) {
+        for (const sz of [-1, 1]) {
+          const ox = sx * (width * 0.5);
+          const oz = sz * (depth * 0.5);
+          this.webAnchors.push(new THREE.Vector3(config.x + ox, baseH + 1.2, config.z + oz));
+          this.addLatchGlint(bGroup, ox, baseH + 1.2, oz);
+        }
+      }
+
+      // Landable edge trims along the outer perimeter of the setback terrace ring
+      const trimT = 0.04;
+      const trimW = 0.25;
+      const tNorthGeom = new THREE.BoxGeometry(width, trimT, trimW);
+      const tNorth = new THREE.Mesh(tNorthGeom, this.landableTrimMat);
+      tNorth.position.set(0, baseH + trimT * 0.5, depth * 0.5 - trimW * 0.5);
+      tNorth.raycast = () => {};
+      bGroup.add(tNorth);
+
+      const tSouth = new THREE.Mesh(tNorthGeom, this.landableTrimMat);
+      tSouth.position.set(0, baseH + trimT * 0.5, -depth * 0.5 + trimW * 0.5);
+      tSouth.raycast = () => {};
+      bGroup.add(tSouth);
+
+      const tEastGeom = new THREE.BoxGeometry(trimW, trimT, Math.max(0.1, depth - trimW * 2.0));
+      const tEast = new THREE.Mesh(tEastGeom, this.landableTrimMat);
+      tEast.position.set(width * 0.5 - trimW * 0.5, baseH + trimT * 0.5, 0);
+      tEast.raycast = () => {};
+      bGroup.add(tEast);
+
+      const tWest = new THREE.Mesh(tEastGeom, this.landableTrimMat);
+      tWest.position.set(-width * 0.5 + trimW * 0.5, baseH + trimT * 0.5, 0);
+      tWest.raycast = () => {};
+      bGroup.add(tWest);
+
       // 2. Upper setback section
       roofW = width * setbackScale;
       roofD = depth * setbackScale;
@@ -637,6 +758,17 @@ export class CityBuilder {
       const upperGeom = new THREE.BoxGeometry(roofW, upperH, roofD);
       const upperMesh = this.addMeshWithEdges(bGroup, upperGeom, this.facadeMat, InkShaderMaterial.defaultInkColor, true);
       upperMesh.position.set(0, setbackHeight + upperH * 0.5, 0);
+
+      // Terrace props: on artdeco setback terraces wider than 6m (or B5), add 1-2 HVAC/vent boxes
+      const terraceWalkwayW = (width - roofW) * 0.5;
+      if (terraceWalkwayW >= 6.0 || (config.width === 24 && config.height === 85)) {
+        this.buildTerraceHvacProps(bGroup, config, baseH, roofW, roofD);
+      }
+
+      // Balconies on upper tier if tall enough
+      if (upperH >= 24) {
+        this.buildTieredBalconies(bGroup, config, baseH, upperH, roofW, roofD);
+      }
     } else {
       // Standard monolithic skyscraper
       const bGeom = new THREE.BoxGeometry(width, height, depth);
@@ -650,6 +782,62 @@ export class CityBuilder {
         const bandGeom = new THREE.BoxGeometry(width + 0.3, 0.8, depth + 0.3);
         const band = this.addMeshWithEdges(bGroup, bandGeom, this.trimMat, InkShaderMaterial.defaultInkColor, false);
         band.position.set(0, bandY, 0);
+      }
+
+      // Industrial style: add 8m industrial roof mast
+      if (config.style === 'industrial') {
+        this.buildIndustrialMast(bGroup, config, height);
+      }
+
+      // Terrace style (B1 Connected Adjacent): add landable trims on roof terrace edges + HVAC props
+      if (config.style === 'terrace') {
+        const trimT = 0.04;
+        const trimW = 0.25;
+        const rNorthGeom = new THREE.BoxGeometry(width, trimT, trimW);
+        const rNorth = new THREE.Mesh(rNorthGeom, this.landableTrimMat);
+        rNorth.position.set(0, height + trimT * 0.5, depth * 0.5 - trimW * 0.5);
+        rNorth.raycast = () => {};
+        bGroup.add(rNorth);
+
+        const rSouth = new THREE.Mesh(rNorthGeom, this.landableTrimMat);
+        rSouth.position.set(0, height + trimT * 0.5, -depth * 0.5 + trimW * 0.5);
+        rSouth.raycast = () => {};
+        bGroup.add(rSouth);
+
+        const rEastGeom = new THREE.BoxGeometry(trimW, trimT, Math.max(0.1, depth - trimW * 2.0));
+        const rEast = new THREE.Mesh(rEastGeom, this.landableTrimMat);
+        rEast.position.set(width * 0.5 - trimW * 0.5, height + trimT * 0.5, 0);
+        rEast.raycast = () => {};
+        bGroup.add(rEast);
+
+        const rWest = new THREE.Mesh(rEastGeom, this.landableTrimMat);
+        rWest.position.set(-width * 0.5 + trimW * 0.5, height + trimT * 0.5, 0);
+        rWest.raycast = () => {};
+        bGroup.add(rWest);
+
+        // Add 2 HVAC boxes for chest cover + step platforms on B1 terrace
+        this.buildTerraceHvacProps(bGroup, config, height, 14, 14);
+      }
+    }
+
+    // Additional mid-height face latches for outer perimeter coverage
+    if (config.x === 55 && config.z === 135) {
+      // B7 North-3 (east face latches)
+      for (const y of [35, 55]) {
+        this.webAnchors.push(new THREE.Vector3(config.x + width * 0.5, y, config.z));
+        this.addLatchGlint(bGroup, width * 0.5, y, 0);
+      }
+    } else if (config.x === 130 && config.z === 25) {
+      // B18 Far-East-1 (north face latches)
+      for (const y of [35, 60]) {
+        this.webAnchors.push(new THREE.Vector3(config.x, y, config.z + depth * 0.5));
+        this.addLatchGlint(bGroup, 0, y, depth * 0.5);
+      }
+    } else if (config.x === -75 && config.z === 135) {
+      // B9 North-5 (west face latches)
+      for (const y of [35, 55]) {
+        this.webAnchors.push(new THREE.Vector3(config.x - width * 0.5, y, config.z));
+        this.addLatchGlint(bGroup, -width * 0.5, y, 0);
       }
     }
 
@@ -755,6 +943,24 @@ export class CityBuilder {
       const slabGeom = new THREE.BoxGeometry(nx !== 0 ? outD : alongW, 0.3, nx !== 0 ? alongW : outD);
       const slab = this.addMeshWithEdges(parent, slabGeom, this.roofMat, InkShaderMaterial.defaultInkColor, true);
       slab.position.set(cx, sillY, cz);
+
+      // Landable trim strip along the outer edge of the balcony slab
+      const trimT = 0.04;
+      const trimW = 0.18;
+      const bTrimGeom = new THREE.BoxGeometry(
+        nx !== 0 ? trimW : alongW,
+        trimT,
+        nx !== 0 ? alongW : trimW
+      );
+      const bTrim = new THREE.Mesh(bTrimGeom, this.landableTrimMat);
+      const trimOffset = outD * 0.5 - trimW * 0.5;
+      bTrim.position.set(
+        cx + nx * trimOffset,
+        sillY + 0.15 + trimT * 0.5,
+        cz + nz * trimOffset
+      );
+      bTrim.raycast = () => {};
+      parent.add(bTrim);
 
       // Outer railing + two side rails (visual + bullet cover)
       const outerLen = alongW;
@@ -876,6 +1082,11 @@ export class CityBuilder {
     // High-value grapple point right at the peak of the conical cap
     const peakWorldY = roofY + standHeight + 0.25 + tankHeight + capHeight;
     this.webAnchors.push(new THREE.Vector3(worldX + localX, peakWorldY, worldZ + localZ));
+
+    // Water-tower deck ring latch anchor + ink glint
+    const deckWorldY = roofY + standHeight + 0.3;
+    this.webAnchors.push(new THREE.Vector3(worldX + localX, deckWorldY, worldZ + localZ));
+    this.addLatchGlint(parent, localX, deckWorldY - roofY, localZ);
   }
 
   /**
@@ -995,6 +1206,209 @@ export class CityBuilder {
 
     const eRail2 = this.addMeshWithEdges(parent, eRailGeom, this.metalMat, InkShaderMaterial.defaultInkColor, false);
     eRail2.position.set(halfW - 0.1, roofY + railHeight, -halfD + eRailHalfL * 0.5);
+
+    // Connected Adjacent Building (B1) skybridge dock steps:
+    // Connects skybridge deck (15.4) to B1 terrace roof (18.0) without jumping
+    const stepMat = this.roofMat;
+    const s1Geom = new THREE.BoxGeometry(2.0, 0.45, 3.6);
+    const s1 = this.addMeshWithEdges(parent, s1Geom, stepMat, InkShaderMaterial.defaultInkColor, true);
+    s1.position.set(12.0, 16.025, 0);
+
+    const s2Geom = new THREE.BoxGeometry(2.0, 0.5, 3.6);
+    const s2 = this.addMeshWithEdges(parent, s2Geom, stepMat, InkShaderMaterial.defaultInkColor, true);
+    s2.position.set(10.0, 16.85, 0);
+
+    const s3Geom = new THREE.BoxGeometry(2.0, 0.5, 3.6);
+    const s3 = this.addMeshWithEdges(parent, s3Geom, stepMat, InkShaderMaterial.defaultInkColor, true);
+    s3.position.set(8.0, 17.75, 0);
+
+    // Landable trim on the front edge of each step
+    const stepTrimGeom = new THREE.BoxGeometry(0.15, 0.04, 3.6);
+    for (const [sx, sy] of [[12.9, 16.27], [10.9, 17.12], [8.9, 18.02]]) {
+      const st = new THREE.Mesh(stepTrimGeom, this.landableTrimMat);
+      st.position.set(sx, sy, 0);
+      st.raycast = () => {};
+      parent.add(st);
+    }
+
+    // Side handrails along the dock steps (North and South at z = ±1.8)
+    const stepRailGeom = new THREE.BoxGeometry(6.0, 0.08, 0.08);
+    for (const sz of [-1.8, 1.8]) {
+      const sr = this.addMeshWithEdges(parent, stepRailGeom, this.metalMat, InkShaderMaterial.defaultInkColor, false);
+      sr.rotation.z = -Math.atan2(2.6, 6.0); // angle ascending from 15.4 to 18.0
+      sr.position.set(10.0, 17.8, sz);
+    }
+  }
+
+  /**
+   * Builds low HVAC/vent box cover units on setback terraces that serve as chest cover
+   * and stepping platforms.
+   */
+  private buildTerraceHvacProps(
+    parent: THREE.Group,
+    config: SkyscraperConfig,
+    terraceY: number,
+    roofW: number,
+    roofD: number
+  ): void {
+    const hd = config.depth * 0.5;
+    const halfRD = roofD * 0.5;
+
+    const hvacH = 1.3;
+    const hvacW = 2.4;
+    const hvacD = 1.6;
+
+    const northWalkwayZ = (halfRD + hd) * 0.5;
+    const southWalkwayZ = -(halfRD + hd) * 0.5;
+
+    const positions = [
+      { lx: 0, lz: northWalkwayZ, w: hvacW, d: hvacD },
+      { lx: 0, lz: southWalkwayZ, w: hvacW, d: hvacD },
+    ];
+
+    for (let i = 0; i < positions.length; i++) {
+      const pos = positions[i];
+      const hGroup = new THREE.Group();
+      hGroup.name = `TerraceHvac_${i}`;
+      hGroup.position.set(pos.lx, terraceY, pos.lz);
+
+      const cabGeom = new THREE.BoxGeometry(pos.w, hvacH, pos.d);
+      const cab = this.addMeshWithEdges(hGroup, cabGeom, this.metalMat, InkShaderMaterial.defaultInkColor, true);
+      cab.position.set(0, hvacH * 0.5, 0);
+
+      const fanGeom = new THREE.CylinderGeometry(0.45, 0.45, 0.2, 10);
+      const fan = this.addMeshWithEdges(hGroup, fanGeom, this.metalMat, InkShaderMaterial.defaultInkColor, true);
+      fan.position.set(0, hvacH + 0.1, 0);
+
+      parent.add(hGroup);
+
+      this.terraceHvacSpecs.push({
+        cx: config.x + pos.lx,
+        cy: terraceY,
+        cz: config.z + pos.lz,
+        w: pos.w,
+        h: hvacH,
+        d: pos.d,
+      });
+    }
+  }
+
+  /**
+   * Balconies on the upper tier of tall setback skyscrapers.
+   */
+  private buildTieredBalconies(
+    parent: THREE.Group,
+    config: SkyscraperConfig,
+    baseH: number,
+    upperH: number,
+    roofW: number,
+    roofD: number
+  ): void {
+    let nx = 0;
+    let nz = 0;
+    if (Math.abs(config.x) >= Math.abs(config.z)) {
+      nx = config.x > 0 ? -1 : 1;
+    } else {
+      nz = config.z > 0 ? -1 : 1;
+    }
+    if (nx === 0 && nz === 0) nz = -1;
+
+    const hw = roofW * 0.5;
+    const hd = roofD * 0.5;
+    const alongW = 4.6;
+    const outD = 2.0;
+    const railH = 1.1;
+    const railT = 0.12;
+
+    let placed = 0;
+    for (let yRel = 12; yRel < upperH - 6 && placed < 2; yRel += 12) {
+      placed++;
+      const y = baseH + yRel;
+      const cx = nx * (hw + outD * 0.5);
+      const cz = nz * (hd + outD * 0.5);
+      const sillY = y - 0.15;
+
+      const slabGeom = new THREE.BoxGeometry(nx !== 0 ? outD : alongW, 0.3, nx !== 0 ? alongW : outD);
+      const slab = this.addMeshWithEdges(parent, slabGeom, this.roofMat, InkShaderMaterial.defaultInkColor, true);
+      slab.position.set(cx, sillY, cz);
+
+      // Landable trim on outer edge
+      const trimT = 0.04;
+      const trimW = 0.18;
+      const bTrimGeom = new THREE.BoxGeometry(
+        nx !== 0 ? trimW : alongW,
+        trimT,
+        nx !== 0 ? alongW : trimW
+      );
+      const bTrim = new THREE.Mesh(bTrimGeom, this.landableTrimMat);
+      const trimOffset = outD * 0.5 - trimW * 0.5;
+      bTrim.position.set(cx + nx * trimOffset, sillY + 0.15 + trimT * 0.5, cz + nz * trimOffset);
+      bTrim.raycast = () => {};
+      parent.add(bTrim);
+
+      const outerGeom = new THREE.BoxGeometry(nx !== 0 ? railT : alongW, railH, nx !== 0 ? alongW : railT);
+      const outer = this.addMeshWithEdges(parent, outerGeom, this.metalMat, InkShaderMaterial.defaultInkColor, true);
+      outer.position.set(cx + nx * (outD * 0.5 - railT * 0.5), y + railH * 0.5, cz + nz * (outD * 0.5 - railT * 0.5));
+
+      const sideLen = outD - railT;
+      const sideGeom = new THREE.BoxGeometry(nx !== 0 ? sideLen : railT, railH, nx !== 0 ? railT : sideLen);
+      const tx = -nz;
+      const tz = nx;
+      for (const s of [-1, 1]) {
+        const side = this.addMeshWithEdges(parent, sideGeom, this.metalMat, InkShaderMaterial.defaultInkColor, true);
+        side.position.set(
+          cx + tx * s * (alongW * 0.5 - railT * 0.5),
+          y + railH * 0.5,
+          cz + tz * s * (alongW * 0.5 - railT * 0.5)
+        );
+      }
+
+      for (const s of [-1, 1]) {
+        const lx = config.x + cx + tx * s * (alongW * 0.5) + nx * (outD * 0.5);
+        const lz = config.z + cz + tz * s * (alongW * 0.5) + nz * (outD * 0.5);
+        this.webAnchors.push(new THREE.Vector3(lx, y + 1.3, lz));
+        this.addLatchGlint(parent, lx - config.x, y + 1.3, lz - config.z);
+      }
+
+      this.balconySpecs.push({
+        cx: config.x + cx,
+        cy: y,
+        cz: config.z + cz,
+        hw: nx !== 0 ? outD * 0.5 : alongW * 0.5,
+        hd: nx !== 0 ? alongW * 0.5 : outD * 0.5,
+        nx,
+        nz,
+      });
+    }
+  }
+
+  /**
+   * Builds an 8m industrial roof mast with beacon and tip latch on industrial buildings.
+   */
+  private buildIndustrialMast(parent: THREE.Group, config: SkyscraperConfig, roofY: number): void {
+    const mastGroup = new THREE.Group();
+    mastGroup.name = 'IndustrialMast';
+    mastGroup.position.set(0, roofY, 0);
+
+    const mastHeight = 8.0;
+
+    const pedGeom = new THREE.BoxGeometry(1.4, 0.6, 1.4);
+    const ped = this.addMeshWithEdges(mastGroup, pedGeom, this.metalMat, InkShaderMaterial.defaultInkColor, true);
+    ped.position.set(0, 0.3, 0);
+
+    const mastGeom = new THREE.CylinderGeometry(0.06, 0.16, mastHeight, 6);
+    const mast = this.addMeshWithEdges(mastGroup, mastGeom, this.metalMat, InkShaderMaterial.defaultInkColor, true);
+    mast.position.set(0, 0.6 + mastHeight * 0.5, 0);
+
+    const beaconGeom = new THREE.SphereGeometry(0.25, 6, 6);
+    const beacon = this.addMeshWithEdges(mastGroup, beaconGeom, this.accentMat, InkShaderMaterial.defaultAccentColor, true);
+    beacon.position.set(0, 0.6 + mastHeight + 0.25, 0);
+
+    parent.add(mastGroup);
+
+    const tipY = roofY + 0.6 + mastHeight + 0.3;
+    this.webAnchors.push(new THREE.Vector3(config.x, tipY, config.z));
+    this.addLatchGlint(parent, 0, tipY - roofY, 0);
   }
 
   /**

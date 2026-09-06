@@ -18,14 +18,35 @@ export enum MovementMode {
 }
 
 export class SwingPhysics {
-  // TUNING (courtyard method: measure drills S1-S8 in GAME_PLAN.md section 30 before changing):
-  // gravity 26.0 — snappy superhero fall, jump 13.5 => ~3.5m hop
-  // pumpPower 20.0 (updateSwinging) — W adds speed along swing tangent
-  // reel 16.0 in / 14.0 out — Shift/Ctrl rope length change
-  // zipSpeed 62.0 — web-zip pull, eases by arrival pop
-  // terminalVelocity 65.0 — hard cap, no stacking exploit
-  // airAccel 18.0 — airborne steering nudge, preserves momentum
-  // groundSpeed 14.0 / friction 12.0 — full speed in ~0.25s
+  // =========================================================================
+  // TUNING & PHYSICS ARCHITECTURE (GAME_PLAN.md sections 6, 7, 24.1, 30)
+  //
+  // CONSTRAINT + SPRING ROPE MODEL (Junior Engineer Reference):
+  // 1. Distance check: toPlayer = pos - anchor, currentDist = |toPlayer|, ropeDir = toPlayer / currentDist.
+  // 2. Slack state: if currentDist < ropeLength, rope is slack (isWebTaut=false); gravity applies freely.
+  // 3. Slack auto-release: if slack persists continuously for >0.5s, web auto-releases to prevent dead hangs.
+  // 4. Taut constraint: if currentDist >= ropeLength (isWebTaut=true), radial outgoing velocity (v . ropeDir > 0)
+  //    is strictly zeroed out, simulating an inextensible cable constraint.
+  // 5. Spring restorative force: stretch = currentDist - ropeLength; force = stretch * webSpringConstant (280 N/m)
+  //    pulls inward toward anchor along -ropeDir.
+  // 6. Viscous damping: dampForce = radialSpeed * webDamping (18 Ns/m) suppresses longitudinal rope bounce.
+  // 7. Centripetal acceleration: a_c = (v_tangent^2 / r) directed along -ropeDir keeps circular arc trajectory stable.
+  // 8. Integration position clamp: soft snap pos = anchor + ropeDir * (ropeLength + stretch * 0.15) prevents drift.
+  // 9. Tangential pumping: holding W projects inputDir onto plane orthogonal to ropeDir, applying pumpPower (20 m/s^2).
+  // 10. Reel rates: reel-in (Shift) shortens rope at 16 m/s; reel-out (Ctrl/X) lengthens at 14 m/s (clamped 6..90m).
+  //
+  // FINAL DESIGN & TUNING DECISIONS (Section 24.1):
+  // - Walk speed (14.0 m/s): KEPT at 14.0. Reason: With Shift dedicated strictly to web reel-in (no sprint key),
+  //   a standard 7.0 m/s human walk feels sluggish across 50-80m skyscraper gaps. 14.0 m/s gives Spider-Man level
+  //   parkour agility on roofs/streets, reaches full speed in 0.25s (friction 12), and ADS slows to 60% (8.4 m/s).
+  // - Air brake rate (36.0 m/s^2): 2x base air acceleration (18.0 * 2.0). Holding S/back in mid-air bleeds horizontal
+  //   speed down to zero smoothly in ~0.7s from 25 m/s, providing precise perch landing without reversing direction.
+  // - Dive rate (+16.0 m/s^2 down, +8.0 m/s^2 forward, 0.5 rad/s pitch assist): Holding Ctrl in air adds downward
+  //   momentum assist + forward glide for high-speed dive-bombs, strictly clamped at terminalVelocity (65.0 m/s).
+  // - Zip ease curve (5.0m -> 2.5m, 62 m/s -> 28 m/s): Linear ease over final 5 meters ensures player arrives at
+  //   mantle threshold smoothly so landing stick checks succeed without high-speed tunneling through colliders.
+  // =========================================================================
+
   // World constants
   public gravity: number = 26.0; // Snappy superhero gravity (m/s^2)
   public airDrag: number = 0.004; // Quadratic air resistance
@@ -46,6 +67,16 @@ export class SwingPhysics {
   public swingTime: number = 0;
   public webSpringConstant: number = 280.0; // Web elasticity
   public webDamping: number = 18.0;
+
+  // Slack auto-release timer (continuous slack for 0.5s auto-releases web)
+  public slackTimer: number = 0;
+  public maxSlackTime: number = 0.5;
+
+  // Hard-landing control damp timer (0.25s control damp after landing > 25 m/s)
+  public controlDampTimer: number = 0;
+
+  // Air brake rate multiplier (2x faster horizontal speed bleed)
+  public airBrakeMultiplier: number = 2.0;
 
   // Web zip state
   public zipTarget: THREE.Vector3 | null = null;
@@ -91,6 +122,7 @@ export class SwingPhysics {
     this.ropeLength = THREE.MathUtils.clamp(dist, this.minRopeLength, this.maxRopeLength);
     this.mode = MovementMode.SWINGING;
     this.swingTime = 0;
+    this.slackTimer = 0;
     this.isWebTaut = true;
 
     // Slight momentum redirect toward swing tangent to ensure immediate smooth arc
@@ -109,6 +141,7 @@ export class SwingPhysics {
     if (!this.webAnchor) return this.velocity;
 
     this.mode = MovementMode.AIR;
+    this.slackTimer = 0;
     const releasedVel = this.velocity.clone();
 
     // If released on upward swing with jump button, apply slingshot impulse
@@ -141,6 +174,32 @@ export class SwingPhysics {
     this.zipProgress = 0;
     // Detach swing if any
     this.webAnchor = null;
+    this.slackTimer = 0;
+  }
+
+  /**
+   * Cancels active web zip into a swing-style release boost along look direction
+   */
+  public cancelWebZip(lookDir?: THREE.Vector3): THREE.Vector3 {
+    if (this.mode !== MovementMode.WEB_ZIPPING) return this.velocity;
+    this.mode = MovementMode.AIR;
+    this.zipTarget = null;
+
+    const forwardBoost = 10.0;
+    const verticalBoost = 8.0;
+
+    if (lookDir) {
+      const flatLook = this._tempVecA.set(lookDir.x, 0, lookDir.z).normalize();
+      this.velocity.addScaledVector(flatLook, forwardBoost);
+    }
+    this.velocity.y = Math.max(this.velocity.y, 0) + verticalBoost;
+
+    // Cap at terminal velocity
+    if (this.velocity.length() > this.terminalVelocity) {
+      this.velocity.normalize().multiplyScalar(this.terminalVelocity);
+    }
+
+    return this.velocity;
   }
 
   /**
@@ -151,10 +210,17 @@ export class SwingPhysics {
     inputDir: THREE.Vector3, // Movement input relative to camera
     lookDir: THREE.Vector3,
     isReelingIn: boolean,
-    isReelingOut: boolean
+    isReelingOut: boolean,
+    braking: boolean = false,
+    diving: boolean = false
   ): void {
     // Clamp dt to prevent tunneling on frame drops
     const clampedDt = Math.min(dt, 0.05);
+
+    // Decay hard landing control damp timer
+    if (this.controlDampTimer > 0) {
+      this.controlDampTimer = Math.max(0, this.controlDampTimer - clampedDt);
+    }
 
     switch (this.mode) {
       case MovementMode.SWINGING:
@@ -171,7 +237,7 @@ export class SwingPhysics {
         break;
       case MovementMode.AIR:
       default:
-        this.updateAir(clampedDt, inputDir, lookDir);
+        this.updateAir(clampedDt, inputDir, lookDir, braking, diving);
         break;
     }
 
@@ -222,9 +288,10 @@ export class SwingPhysics {
     // Apply gravity
     this.velocity.y -= this.gravity * dt;
 
-    // 3. Check rope constraint
+    // 3. Check rope constraint & slack auto-release
     if (currentDist >= this.ropeLength) {
       this.isWebTaut = true;
+      this.slackTimer = 0;
 
       // Radial velocity component (along rope outwards)
       const radialSpeed = this.velocity.dot(ropeDir);
@@ -254,6 +321,13 @@ export class SwingPhysics {
       }
     } else {
       this.isWebTaut = false;
+      this.slackTimer += dt;
+      // Auto-release without boost if slack continuously for 0.5s
+      if (this.slackTimer >= this.maxSlackTime) {
+        this.releaseWeb(false);
+        this.slackTimer = 0;
+        return;
+      }
     }
 
     // 4. Momentum Pumping (holding W accelerates along tangent)
@@ -277,7 +351,7 @@ export class SwingPhysics {
   }
 
   /**
-   * High-speed zip directly to target ledge / anchor
+   * High-speed zip directly to target ledge / anchor with ease-out
    */
   private updateWebZip(dt: number): void {
     if (!this.zipTarget) {
@@ -301,9 +375,13 @@ export class SwingPhysics {
       return;
     }
 
+    // Ease-out over the last 5 meters (from 5m down to 2.5m) so landings stick cleanly
+    const easeScale = dist < 5.0 ? THREE.MathUtils.clamp((dist - 2.5) / 2.5 * 0.55 + 0.45, 0.45, 1.0) : 1.0;
+    const currentZipSpeed = this.zipSpeed * easeScale;
+
     // High velocity pull — move directly so we can't stall on drag
     toTarget.normalize();
-    this.velocity.copy(toTarget).multiplyScalar(this.zipSpeed);
+    this.velocity.copy(toTarget).multiplyScalar(currentZipSpeed);
     this.position.addScaledVector(this.velocity, dt);
     this.velocity.multiplyScalar(0.55);
   }
@@ -355,16 +433,50 @@ export class SwingPhysics {
   }
 
   /**
-   * Standard airborne physics with responsive air control
+   * Standard airborne physics with responsive air control, air brake, and diving
    */
-  private updateAir(dt: number, inputDir: THREE.Vector3, _lookDir: THREE.Vector3): void {
+  private updateAir(
+    dt: number,
+    inputDir: THREE.Vector3,
+    lookDir: THREE.Vector3,
+    braking: boolean = false,
+    diving: boolean = false
+  ): void {
     // Gravity
     this.velocity.y -= this.gravity * dt;
 
-    // Air steering control (does not stop high horizontal momentum, only nudges trajectory)
-    if (inputDir.lengthSq() > 0.01) {
-      const airAccel = 18.0;
-      this.velocity.addScaledVector(inputDir, airAccel * dt);
+    // Air steering control (halved if control-damped after hard landing)
+    const accelDamp = this.controlDampTimer > 0 ? 0.5 : 1.0;
+    const baseAirAccel = 18.0 * accelDamp;
+
+    // Air brake: holding S/back in midair bleeds horizontal speed 2x faster (36 m/s^2)
+    if (braking) {
+      const hVel = this._tempVecA.set(this.velocity.x, 0, this.velocity.z);
+      const hSpeed = hVel.length();
+      if (hSpeed > 0.01) {
+        const brakeDecel = baseAirAccel * this.airBrakeMultiplier;
+        const newSpeed = Math.max(0, hSpeed - brakeDecel * dt);
+        const factor = newSpeed / hSpeed;
+        this.velocity.x *= factor;
+        this.velocity.z *= factor;
+      }
+    } else if (inputDir.lengthSq() > 0.01) {
+      this.velocity.addScaledVector(inputDir, baseAirAccel * dt);
+    }
+
+    // Dive: holding Ctrl in air adds downward speed + forward assist
+    if (diving) {
+      this.velocity.y -= 16.0 * dt;
+      const flatLook = this._tempVecB.set(lookDir.x, 0, lookDir.z);
+      if (flatLook.lengthSq() > 1e-4) {
+        flatLook.normalize();
+        this.velocity.addScaledVector(flatLook, 8.0 * dt);
+      }
+    }
+
+    // Cap downward speed to terminal velocity
+    if (this.velocity.y < -this.terminalVelocity) {
+      this.velocity.y = -this.terminalVelocity;
     }
   }
 
@@ -379,12 +491,13 @@ export class SwingPhysics {
     this.velocity.x = horizontalVel.x;
     this.velocity.z = horizontalVel.z;
 
-    // Ground acceleration
+    // Ground acceleration (halved if control-damped after hard landing)
     if (inputDir.lengthSq() > 0.01) {
+      const accelDamp = this.controlDampTimer > 0 ? 0.5 : 1.0;
       const groundSpeed = 14.0 * this.speedMultiplier;
       const targetVel = this._tempVecB.copy(inputDir).normalize().multiplyScalar(groundSpeed);
-      this.velocity.x += (targetVel.x - this.velocity.x) * 14.0 * dt;
-      this.velocity.z += (targetVel.z - this.velocity.z) * 14.0 * dt;
+      this.velocity.x += (targetVel.x - this.velocity.x) * (14.0 * accelDamp) * dt;
+      this.velocity.z += (targetVel.z - this.velocity.z) * (14.0 * accelDamp) * dt;
     }
 
     this.velocity.y = 0;
@@ -415,6 +528,8 @@ export class SwingPhysics {
     this.coyoteTimer = 0;
     this.jumpBufferTimer = 0;
     this.wallRunTimer = 0;
+    this.slackTimer = 0;
+    this.controlDampTimer = 0;
   }
 
   /**
@@ -431,6 +546,7 @@ export class SwingPhysics {
       if (this.mode === MovementMode.AIR || this.mode === MovementMode.SWINGING) {
         this.mode = MovementMode.GROUNDED;
         this.webAnchor = null;
+        this.slackTimer = 0;
       }
     } else {
       if (this.isGrounded && feetY > groundY + 0.1) {

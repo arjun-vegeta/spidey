@@ -2,6 +2,22 @@ import * as THREE from 'three';
 import { BaseWeapon } from './BaseWeapon';
 import { InkShaderMaterial } from '../shaders/InkShaderMaterial';
 
+/**
+ * ====================================================================
+ * WEAPON TUNING SPECIFICATION [GAME_PLAN 24.2]
+ * --------------------------------------------------------------------
+ * Weapon:                  SMG
+ * Damage:                  22
+ * Headshot Multiplier:     2.0x (44 dmg)
+ * Falloff Band:            Start: 10m, End: 35m, Floor: 50% (11 dmg min)
+ * Rate of Fire (RoF):      12.5 rounds/s (full-auto hose)
+ * Magazine / Reserve Ammo: 32 / 160
+ * Spread (Hip / ADS):      0.028 rad (~1.60°) / 0.0154 rad (~0.88°)
+ * Reload Time:             1.4s
+ * Swing Usability:         LOCKED while swinging
+ * TTK Breakpoints:         Thug (90 HP) body = 5 shots (0.32s TTK < 1.0s close hose)
+ * ====================================================================
+ */
 export class SMG extends BaseWeapon {
   public readonly name = 'SMG';
   public readonly type = 'smg' as const;
@@ -12,6 +28,9 @@ export class SMG extends BaseWeapon {
   public readonly damage = 22;
   public readonly headshotMultiplier = 2.0;
   public readonly range = 75;
+  public readonly falloffStart = 10;
+  public readonly falloffEnd = 35;
+  public readonly falloffFloor = 0.50;
   public readonly spread = 0.028;
   public readonly recoilAmount = 0.045;
   public readonly reloadTime = 1.4;
@@ -37,6 +56,10 @@ export class SMG extends BaseWeapon {
       useUv: true,
       uvScale: 2.2
     });
+
+    // Register flash materials for 1-frame muzzle emissive pulse
+    this.registerFlashMaterial(gunMat, new THREE.Color(0x132364), new THREE.Color(0x8aa8ff));
+    this.registerFlashMaterial(darkMat, new THREE.Color(0x0a1435), new THREE.Color(0x5070c0));
 
     const redReticleMat = new THREE.MeshBasicMaterial({
       color: 0xd63031,

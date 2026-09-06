@@ -2,6 +2,23 @@ import * as THREE from 'three';
 import { BaseWeapon } from './BaseWeapon';
 import { InkShaderMaterial } from '../shaders/InkShaderMaterial';
 
+/**
+ * ====================================================================
+ * WEAPON TUNING SPECIFICATION [GAME_PLAN 24.2]
+ * --------------------------------------------------------------------
+ * Weapon:                  SNIPER
+ * Damage:                  145
+ * Headshot Multiplier:     3.0x (435 dmg)
+ * Falloff Band:            EXEMPT (100% damage across full 400m range)
+ *                          Start: 400m, End: 400m, Floor: 100% (145 dmg)
+ * Rate of Fire (RoF):      1.1 rounds/s (bolt-action event weapon)
+ * Magazine / Reserve Ammo: 5 / 25
+ * Spread (Hip / ADS):      0.0005 rad (~0.03°) / 0.000275 rad (~0.016°)
+ * Reload Time:             2.2s
+ * Swing Usability:         LOCKED while swinging
+ * TTK Breakpoints:         Thug (90 HP) body = 1 shot (one-taps thugs); head = 1 shot
+ * ====================================================================
+ */
 export class Sniper extends BaseWeapon {
   public readonly name = 'SNIPER';
   public readonly type = 'sniper' as const;
@@ -12,6 +29,9 @@ export class Sniper extends BaseWeapon {
   public readonly damage = 145; // One-shot kill on standard grunts!
   public readonly headshotMultiplier = 3.0;
   public readonly range = 400;
+  public readonly falloffStart = 400;
+  public readonly falloffEnd = 400;
+  public readonly falloffFloor = 1.0; // Sniper is exempt from damage falloff
   public readonly spread = 0.0005; // Pinpoint precision
   public readonly recoilAmount = 0.22;
   public readonly reloadTime = 2.2;
@@ -43,6 +63,11 @@ export class Sniper extends BaseWeapon {
       useUv: true,
       uvScale: 2.0
     });
+
+    // Register flash materials for 1-frame muzzle emissive pulse
+    this.registerFlashMaterial(gunMat, new THREE.Color(0x132364), new THREE.Color(0x9bb5ff));
+    this.registerFlashMaterial(darkMat, new THREE.Color(0x0a1435), new THREE.Color(0x5575c8));
+    this.registerFlashMaterial(scopeMat, new THREE.Color(0x152778), new THREE.Color(0x7090e0));
 
     // 1. Long Rifle Chassis & Stock
     const chassisGeom = new THREE.BoxGeometry(0.055, 0.085, 0.65);
