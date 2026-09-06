@@ -17,7 +17,7 @@ window.addEventListener('DOMContentLoaded', () => {
   const game = new Game();
 
   const modal = document.getElementById('instructions-modal');
-  const playBtn = document.getElementById('play-button');
+  const playBtn = document.getElementById('play-button') as HTMLButtonElement | null;
 
   const startGame = () => {
     if (game.player.isDead) game.restart();
@@ -43,6 +43,13 @@ window.addEventListener('DOMContentLoaded', () => {
       if ((e.target as HTMLElement).closest('button')) return;
       startGame();
     });
+  }
+
+  // Honor a PLAY click that landed before this code arrived (slow first load):
+  // start now; pointer lock follows on the next user gesture if it was too early.
+  if ((window as unknown as { __spideyWantPlay?: boolean }).__spideyWantPlay) {
+    (window as unknown as { __spideyWantPlay?: boolean }).__spideyWantPlay = false;
+    startGame();
   }
 
   window.addEventListener('keydown', (e) => {

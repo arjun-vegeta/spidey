@@ -1,6 +1,5 @@
 /* Hand-Drawn Ink Sketch & Notebook Paper FPS Styles */
-
-@import url('https://fonts.googleapis.com/css2?family=Courier+Prime:ital,wght@0,400;0,700;1,400&family=Special+Elite&display=swap');
+/* Fonts load via <link> in index.html (non-blocking, display=swap) */
 
 :root {
   --ink-blue: #152778;
@@ -573,7 +572,7 @@ html, body {
 .dmg-r{top:0;bottom:0;right:0;width:90px;background:linear-gradient(to left,rgba(214,48,49,.55),transparent)}
 #death-screen .death-killer{font-size:20px;font-weight:700;letter-spacing:2px;color:#152778}
 
-.pause-menu{position:absolute;inset:0;z-index:35;display:none;align-items:center;justify-content:center;background:rgba(250,247,238,.72)}
+.pause-menu{position:absolute;inset:0;z-index:35;display:none;align-items:center;justify-content:center;background:rgba(250,247,238,.88);cursor:pointer}
 .pause-card{display:flex;flex-direction:column;gap:10px;align-items:stretch;min-width:340px;padding:26px 30px;border:3px solid #152778;box-shadow:8px 8px 0 #152778;background:#faf7ee;text-align:center}
 .pause-title{font-size:40px;font-weight:900;letter-spacing:4px;color:#152778}
 .pause-sub{font-size:13px;color:#d63031;margin-bottom:6px}
@@ -586,3 +585,5 @@ html, body {
 .pause-check input{accent-color:#d63031;width:18px;height:18px}
 .pause-keys{font-size:12px;opacity:.7;margin-top:4px}
 .hint-bar{position:absolute;bottom:196px;left:50%;transform:translateX(-50%);z-index:15;display:none;padding:8px 20px;font-size:17px;font-weight:700;letter-spacing:1px;color:#faf7ee;background:#152778;border-radius:3px;box-shadow:3px 3px 0 #d63031;white-space:nowrap}
+
+.build-stamp{position:absolute;right:10px;bottom:6px;z-index:15;font-size:11px;letter-spacing:1px;color:#152778;opacity:.45;pointer-events:none}

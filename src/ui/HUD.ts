@@ -179,6 +179,9 @@ export class HUD {
       <div id="dmg-edge-l" class="dmg-edge dmg-l"></div>
       <div id="dmg-edge-r" class="dmg-edge dmg-r"></div>
 
+      <!-- Build stamp: proves which server run this client came from -->
+      <div id="build-stamp" class="build-stamp"></div>
+
       <!-- Onboarding hint (one at a time, bottom-center) -->
       <div id="hint-bar" class="hint-bar"></div>
 
@@ -226,6 +229,9 @@ export class HUD {
     this.dmgEdgeR = this.container.querySelector('#dmg-edge-r');
     const mapCanvas = this.container.querySelector('#minimap') as HTMLCanvasElement | null;
     if (mapCanvas) this.minimap = new Minimap(mapCanvas);
+    const stamp = this.container.querySelector('#build-stamp');
+    if (stamp) stamp.textContent = 'build ' + __BUILD_ID__;
+    console.log('%c spidey build ' + __BUILD_ID__, 'color:#152778;font-weight:bold');
     this.pauseMenuEl = this.container.querySelector('#pause-menu');
     this.hintBarEl = this.container.querySelector('#hint-bar');
   }
@@ -235,6 +241,13 @@ export class HUD {
   private lastHintText: string = '__none__';
 
   private wirePauseMenu(): void {
+    const menu = this.container.querySelector('#pause-menu');
+    if (menu) menu.addEventListener('click', (e) => {
+      // Clicking the backdrop (not buttons/sliders) resumes instantly
+      if ((e.target as HTMLElement).id === 'pause-menu' && this.onResumeRequest) {
+        this.onResumeRequest();
+      }
+    });
     const resume = this.container.querySelector('#resume-btn');
     if (resume) resume.addEventListener('click', (e) => { e.stopPropagation(); if (this.onResumeRequest) this.onResumeRequest(); });
     const restart = this.container.querySelector('#restart-btn');

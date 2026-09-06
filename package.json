@@ -8,6 +8,7 @@
     "dev": "vite",
     "build": "tsc && vite build",
     "preview": "vite preview",
+    "play": "npm run build && vite preview --port 3000 --strictPort",
     "test": "vitest run",
     "lint": "eslint src"
   },

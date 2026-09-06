@@ -114,10 +114,15 @@ export class Game {
 
     this.input.onLockChange = (locked) => {
       const modal = document.getElementById('instructions-modal');
-      if (locked) {
+      if (locked && this.isRunning) {
         if (modal) modal.style.display = 'none';
         this.hud.setPaused(false);
         soundManager.ensureContext();
+      } else if (locked) {
+        // Locked but the game was never started (early click path): keep the
+        // menu up so the player can never strand themselves in a frozen frame.
+        if (modal) modal.style.display = 'flex';
+        this.hud.setPaused(false);
       } else if (this.player.isDead) {
         if (modal) modal.style.display = 'flex';
         this.hud.setPaused(false);

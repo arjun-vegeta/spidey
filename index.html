@@ -4,6 +4,9 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
   <title>Spider-Man // Hand-Drawn Blueprint Ink FPS</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Courier+Prime:ital,wght@0,400;0,700;1,400&family=Special+Elite&display=swap" rel="stylesheet" />
   <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🕷️</text></svg>">
 </head>
 <body>
@@ -36,6 +39,26 @@
       <button id="play-button" class="play-prompt-btn">ENTER BLUEPRINT CITY & PLAY</button>
     </div>
   </div>
+
+  <script>
+    // Runs even if the game modules fail: surfaces load errors on-screen.
+    window.addEventListener('error', function (e) {
+      var el = document.getElementById('spidey-load-error');
+      if (!el) {
+        el = document.createElement('pre');
+        el.id = 'spidey-load-error';
+        el.style.cssText = 'position:fixed;left:12px;bottom:12px;z-index:999;max-width:60ch;background:#d63031;color:#faf7ee;padding:10px 14px;font:12px monospace;white-space:pre-wrap;';
+        document.body.appendChild(el);
+      }
+      el.textContent = 'SPIDEY FAILED TO LOAD (screenshot this): ' + (e.message || e.type);
+    }, true);
+    // Early-click intent: if PLAY is hit before the game code arrives,
+    // remember it so boot can start the game immediately once ready.
+    window.__spideyWantPlay = false;
+    document.getElementById('play-button').addEventListener('click', function () {
+      window.__spideyWantPlay = true;
+    });
+  </script>
 
   <script type="module" src="/src/main.ts"></script>
 </body>
