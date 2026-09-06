@@ -62,6 +62,11 @@ export class Player {
   public airTime: number = 0;
   public landingDip: number = 0;
 
+  // Stance: crouch (C) and sprint (Shift) are ground-only and context-sensitive.
+  // Shift reels rope while swinging; C reels rope while swinging.
+  public isCrouching: boolean = false;
+  public isSprinting: boolean = false;
+
   // Scope breath: hold Shift to steady, 3s lungs
   private breathLeft: number = 3.0;
   private swayTime: number = 0;
@@ -114,6 +119,9 @@ export class Player {
 
   public reset(): void {
     this.physics.reset(Player.SPAWN);
+    this.physics.playerHeight = this.physics.standHeight;
+    this.isCrouching = false;
+    this.isSprinting = false;
     this.yaw = 0;
     this.pitch = 0;
     this.cameraRoll = 0;
@@ -265,7 +273,7 @@ export class Player {
         this.footstepTimer -= dt;
         if (this.footstepTimer <= 0) {
           soundManager.playFootstep();
-          const stepInterval = Math.max(0.24, 0.50 - (horizSpeed / 14.0) * 0.24);
+          const stepInterval = Math.max(0.24, 0.50 - (horizSpeed / 5.0) * 0.24);
           this.footstepTimer = stepInterval;
         }
       } else {
@@ -279,16 +287,24 @@ export class Player {
     // Scan for potential anchors ahead (forgiving cone + height bias + latch magnet)
     this.webShooter.scanForTargets(this.camera, collidables, this.physics.position, webAnchors);
 
-    // Web attach (Hold right-click or E)
+    // Web attach (tap E / right-click). The line is STICKY: it stays connected
+    // until you sling (Space), grab elsewhere (E again), land, or go slack.
     if (this.input.webJustPressed) {
-      const attached = this.webShooter.shootWeb(undefined, this.physics.position);
-      if (!attached) {
-        soundManager.playDryWeb();
-        if (this.onDryWeb) this.onDryWeb();
+      if (this.isSwinging) {
+        // Re-target mid-swing: drop the old line, grab the new anchor
+        this.webShooter.releaseWeb(false);
+        const attached = this.webShooter.shootWeb(undefined, this.physics.position);
+        if (!attached) {
+          soundManager.playDryWeb();
+          if (this.onDryWeb) this.onDryWeb();
+        }
+      } else {
+        const attached = this.webShooter.shootWeb(undefined, this.physics.position);
+        if (!attached) {
+          soundManager.playDryWeb();
+          if (this.onDryWeb) this.onDryWeb();
+        }
       }
-    } else if (!this.input.isWebHolding() && this.isSwinging) {
-      // Released web: apply slingshot momentum boost if jumping
-      this.webShooter.releaseWeb(this.input.isJumping(), forward);
     }
 
     // Web Zip (Press F)
@@ -308,7 +324,9 @@ export class Player {
         this.webShooter.cancelWebZip(forward);
         this.physics.jumpBufferTimer = 0;
       } else if (this.isSwinging) {
-        this.webShooter.releaseWeb(true, forward);
+        // Sling to the anchor: the web yanks you toward the point you shot
+        this.physics.slingTowardAnchor(forward);
+        this.webShooter.notifyReleased();
         this.physics.jumpBufferTimer = 0;
       } else if (this.physics.isGrounded || this.physics.coyoteTimer > 0) {
         this.physics.jump();
@@ -316,11 +334,33 @@ export class Player {
       }
     }
 
-    // 4. Update Physics Simulation (ADS slows feet on the ground: commitment)
+    // 4. Stance: crouch (C) sits you down, Shift sprints — ground only.
+    // Space with no web is just a plain jump (handled by the buffer below).
+    const groundedNow = this.physics.isGrounded;
+    const aimingNow = this.input.isZoomHolding() && !this.isSwinging;
+    let crouch = this.input.isCrouchHeld() && groundedNow;
+    if (!this.input.isCrouchHeld() && this.physics.crouching && this.worldCollider) {
+      // Trying to stand: check headroom for the full 1.8m body first
+      const needHead = this.physics.position.y + 0.95;
+      const ceil = this.worldCollider.ceilingAt(
+        this.physics.position.x, needHead - 0.1, this.physics.position.z
+      );
+      if (ceil !== null && ceil < needHead) crouch = true;
+    }
+    this.isCrouching = crouch;
+    this.physics.crouching = crouch;
+    this.physics.playerHeight = crouch ? this.physics.crouchHeight : this.physics.standHeight;
+
+    // Sprint: Shift + forward + grounded + not aiming. ADS always wins.
+    this.isSprinting =
+      this.input.isSprintHeld() && groundedNow && !aimingNow && this.input.isMovingForward() && !crouch;
+    this.physics.speedMultiplier = aimingNow && groundedNow
+      ? 0.6
+      : this.isSprinting ? this.physics.sprintMultiplier : 1.0;
+
+    // 5. Update Physics Simulation (ADS slows feet on the ground: commitment)
     const wasGrounded = this.physics.isGrounded;
     const fallSpeedBefore = this.physics.velocity.y;
-    const wantAimSlow = this.input.isZoomHolding() && !this.isSwinging && this.physics.isGrounded;
-    this.physics.speedMultiplier = wantAimSlow ? 0.6 : 1.0;
     const isReelingIn = this.input.isReelingIn();
     const isReelingOut = this.input.isReelingOut();
 
@@ -352,7 +392,8 @@ export class Player {
     }
     this.landingDip = THREE.MathUtils.lerp(this.landingDip, 0, dt * 7.0);
 
-    // Snap camera position to physics position (eye level at 1.7m)
+    // Snap camera position to physics position (eye level drops when crouched)
+    this._eyeOffset.set(0, this.isCrouching ? 0.35 : 0.8, 0);
     this.camera.position.copy(this.physics.position).add(this._eyeOffset);
     this.camera.position.y -= this.landingDip;
 
@@ -379,8 +420,8 @@ export class Player {
     } else if (isAiming && activeWep.type === 'pistol') {
       this.currentFov = THREE.MathUtils.lerp(this.currentFov, 66.0, dt * 12.0);
     } else {
-      const speedT = Math.min(Math.max((currentSpeed - 8) / 32.0, 0), 1);
-      const targetFov = this.baseFov + speedT * 22.0; // Widens from 75 up to 97 deg at high speed
+      const speedT = Math.min(Math.max((currentSpeed - 6) / 30.0, 0), 1);
+      const targetFov = this.baseFov + speedT * 22.0; // Kicks in past a sprint, widens to 97 at full swing
       this.currentFov = THREE.MathUtils.lerp(this.currentFov, targetFov, dt * 6.0);
     }
     if (Math.abs(this.camera.fov - this.currentFov) > 0.01) {
@@ -488,6 +529,18 @@ export class Player {
       if (this.physics.isGrounded) {
         this.physics.isGrounded = false;
         if (this.physics.mode === MovementMode.GROUNDED) this.physics.mode = MovementMode.AIR;
+      }
+    }
+
+    // A2. Ceiling clamp: jumping up into a slab/terrace overhead stops the head.
+    // Without this, slabs are one-way — you can leap straight through floors.
+    if (this.physics.velocity.y > 0.5) {
+      const headY = p.y + halfH + 0.1;
+      const ceiling = coll.ceilingAt(p.x, headY, p.z);
+      if (ceiling !== null && headY >= ceiling) {
+        p.y = ceiling - halfH - 0.12;
+        this.physics.velocity.y = 0;
+        soundManager.playImpactWall();
       }
     }
 

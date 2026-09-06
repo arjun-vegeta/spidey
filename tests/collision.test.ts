@@ -85,10 +85,12 @@ describe('City Collision Shells Integration [8 + 29]', () => {
     expect(coll.groundAt(0, 52.0, 75.5)).toBe(52.0);
   });
 
-  it('stair-cutout hole is NOT ground (falls through to street)', () => {
-    // In stairwell cutout (x: 6..13, z: -4..6), floor 1 at 5.5 is open
-    expect(coll.groundAt(9.5, 5.5, 1.0)).not.toBe(5.5);
-    expect(coll.groundAt(9.5, 5.5, 1.0)).toBe(0.5);
+  it('stair-cutout hole has no slab, but the stair flight itself stands', () => {
+    // Open hole away from the stairs (x 11.5, z -1): falls through to street
+    expect(coll.groundAt(11.5, 5.5, -1.0)).toBe(0.5);
+
+    // The stair flight at (9.5, z 1.0) is walkable: step top 3.5 stands
+    expect(coll.groundAt(9.5, 3.5, 1.0)).toBe(3.5);
 
     // Outside the hole, solid slab stands firmly at 5.5
     expect(coll.groundAt(0, 5.5, 0)).toBe(5.5);
@@ -98,6 +100,33 @@ describe('City Collision Shells Integration [8 + 29]', () => {
     for (const y of [5.5, 10.5, 15.5, 20.5]) {
       expect(coll.groundAt(0, y, 0)).toBe(y);
     }
+  });
+
+  it('construction columns block (no walking through pillars)', () => {
+    // Column at (-3.5, z 0), floor 0: spans y 0.5..5.0
+    const out = { x: 0, z: 0, nx: 0, nz: 0, pushed: false };
+    coll.pushOut(-3.5, 0.2, 0.6, 0.5, 2.3, out);
+    expect(out.pushed).toBe(true);
+  });
+
+  it('ceiling query finds slab undersides so jumps stop at floors', () => {
+    // Head at 4.9 under floor-1 slab (underside 5.0) at (0, 0)
+    expect(coll.ceilingAt(0, 4.9, 0)).toBe(5.0);
+    // Open sky above the roof returns null
+    expect(coll.ceilingAt(0, 30, 0)).toBeNull();
+  });
+
+  it('stair steps rise 0.5m so feet can walk up without jumping', () => {
+    // Flight 0 ascends toward +z: consecutive step tops 0.5 apart
+    const low = coll.groundAt(9.5, 1.0, -3.0);
+    const mid = coll.groundAt(9.5, 1.5, -2.1);
+    expect(low).toBe(1.0);
+    expect(mid).toBe(1.5);
+  });
+
+  it('scaffold planks and crane jib are standable', () => {
+    expect(coll.groundAt(0, 5.0, -12.4)).toBe(5.08);
+    expect(coll.groundAt(20, 45.3, -2.0)).toBeCloseTo(45.38, 2);
   });
 
   it('exposes dumpBoxes() and dumpBounds() for debug toggles', () => {

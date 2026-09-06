@@ -36,6 +36,7 @@ export class SniperEnemy extends Enemy {
   private tmpTarget: THREE.Vector3 = new THREE.Vector3();
   private tmpDir: THREE.Vector3 = new THREE.Vector3();
   private tmpFlat: THREE.Vector3 = new THREE.Vector3();
+  private tmpDown: THREE.Vector3 = new THREE.Vector3();
   private losTimer: number = 0;
   private losClear: boolean = false;
 
@@ -306,7 +307,7 @@ export class SniperEnemy extends Enemy {
         this.hasChargeSound = false;
         soundManager.stopSniperCharge();
       }
-      this.fireSniperShot(this.tmpMuzzle, this.tmpTarget);
+      this.fireSniperShot(this.tmpMuzzle, this.tmpTarget, collidables);
       this.chargeTimer = 0;
       this.shotCooldownTimer = this.shotCooldown;
       this.cancelAim();
@@ -366,9 +367,12 @@ export class SniperEnemy extends Enemy {
   }
 
   /**
-   * Fires the high-powered red sniper shot
+   * Fires the high-powered red sniper shot.
+   * Late-wave repositioning only targets real footing: a down-ray from the
+   * candidate perch must find a floor within 4m, so snipers never hover-dash
+   * off the crane jib into thin air.
    */
-  private fireSniperShot(origin: THREE.Vector3, target: THREE.Vector3): void {
+  private fireSniperShot(origin: THREE.Vector3, target: THREE.Vector3, collidables: THREE.Mesh[]): void {
     this.tmpDir.copy(target).sub(origin).normalize();
 
     this.pendingProjectiles.push({
@@ -394,12 +398,20 @@ export class SniperEnemy extends Enemy {
       // Perpendicular sidestep 5-8m at the same height
       const dist = 5 + Math.random() * 3;
       const dir = Math.random() > 0.5 ? 1 : -1;
-      this.repositionTarget = this.group.position.clone().add(
+      const candidate = this.group.position.clone().add(
         new THREE.Vector3(-side.z * dir * dist, 0, side.x * dir * dist)
       );
-      this.repositionTelegraphTimer = 0.5;
+      this.tmpDown.copy(candidate);
+      this.tmpDown.y += 1.0;
+      this.tmpDir.set(0, -1, 0);
+      this.losRaycaster.set(this.tmpDown, this.tmpDir);
+      this.losRaycaster.far = 5.0;
+      if (this.losRaycaster.intersectObjects(collidables, false).length > 0) {
+        this.repositionTarget = candidate;
+        this.repositionTelegraphTimer = 0.5;
+        soundManager.playSniperRelocate();
+      }
       this.shotsFired = 0;
-      soundManager.playSniperRelocate();
     }
   }
 

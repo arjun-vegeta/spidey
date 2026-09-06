@@ -599,6 +599,85 @@ export class CityBuilder {
       }
     }
 
+    // Construction site columns (0.9m pillars, floors 0-3, stairwell hole kept open)
+    for (let f = 0; f < 4; f++) {
+      const colBase = f * 5.0 + 0.5;
+      for (const cx of [-10.5, -3.5, 3.5, 10.5]) {
+        for (const cz of [-8.5, 0, 8.5]) {
+          if (cx > 5.0 && cz >= -4.0 && cz <= 6.0) continue;
+          coll.addBoxCoords(cx - 0.45, colBase, cz - 0.45, cx + 0.45, colBase + 4.5, cz + 0.45, 'wall');
+        }
+      }
+    }
+
+    // Construction site stair flights: 10 walkable step boxes each + outer balustrade.
+    // 0.5m rise per step so feet can walk up without jumping (0.55m step-up rule).
+    for (let f = 0; f < 4; f++) {
+      const bottomY = f * 5.0 + 0.5;
+      const posX = f % 2 === 0 ? 9.5 : 7.0;
+      const ascendingPlusZ = f % 2 === 0;
+      for (let k = 0; k < 10; k++) {
+        const top = bottomY + (k + 1) * 0.5;
+        const zA = ascendingPlusZ ? -3.5 + k * 0.9 : 5.5 - (k + 1) * 0.9;
+        coll.addBoxCoords(posX - 1.2, top - 1.0, zA, posX + 1.2, top, zA + 0.9, 'floor');
+      }
+      coll.addBoxCoords(posX + 1.2, bottomY, -3.5, posX + 1.38, bottomY + 6.1, 5.5, 'wall');
+      const topY = bottomY + 5.0;
+      const lz = ascendingPlusZ ? 5.5 : -3.5;
+      coll.addBoxCoords(6.5, topY - 0.2, lz - 1.5, 10.5, topY + 0.2, lz + 1.5, 'floor');
+    }
+
+    // Scaffold walk planks (tiers 1-3, north face exterior)
+    for (let t = 1; t <= 3; t++) {
+      const ty = t * 5.0;
+      coll.addBoxCoords(-7.92, ty, -13.16, 7.92, ty + 0.08, -11.63, 'floor');
+    }
+
+    // Crane: outrigger base + lattice mast + operator cab (all solid)
+    coll.addBoxCoords(-1.0, 20.5, -5.0, 5.0, 21.1, 1.0, 'wall');
+    coll.addBoxCoords(0.8, 20.5, -3.2, 3.2, 44.5, -0.8, 'wall');
+    coll.addBoxCoords(1.2, 44.5, -3.1, 3.2, 46.9, -0.9, 'wall');
+    // Crane jib walkway (run on the boom)
+    coll.addBoxCoords(2.0, 45.2, -2.55, 34.0, 45.38, -1.45, 'floor');
+
+    // Jersey barriers, site + street + upper floors (axis-aligned, small angles padded)
+    const jerseys: Array<[number, number, number, boolean, number]> = [
+      [-12.0, 0.5, 12.0, false, 0], [-8.5, 0.5, 12.0, false, 0], [-5.0, 0.5, 12.0, false, 0],
+      [0.0, 0.5, 12.0, false, 0], [4.0, 0.5, 12.0, false, 0.35],
+      [12.0, 0.5, 10.0, true, 0], [12.0, 0.5, 6.0, true, 0],
+      [-12.0, 0.5, -12.0, false, 0], [-7.0, 0.5, -12.0, false, 0],
+      [-6.0, 0.5, -15.0, false, 0], [0.0, 0.5, -15.0, false, 0], [6.0, 0.5, -15.0, false, 0.35],
+      [-5.0, 0.5, 15.0, false, 0], [2.0, 0.5, 15.0, false, 0.35], [8.0, 0.5, 15.0, false, 0],
+      [15.0, 0.5, -3.0, true, 0], [15.0, 0.5, 3.0, true, 0],
+      [-5.0, 5.5, 6.0, false, 0.35], [2.0, 10.5, -4.0, false, 0.35],
+      [-3.0, 15.5, 4.0, false, 0.35], [4.0, 20.5, -6.0, false, 0],
+    ];
+    for (const [jx, jy, jz, longX, pad] of jerseys) {
+      const hw = (longX ? 3.0 : 0.7) / 2 + pad;
+      const hd = (longX ? 0.7 : 3.0) / 2 + pad;
+      coll.addBoxCoords(jx - hw, jy, jz - hd, jx + hw, jy + 0.65, jz + hd, 'wall');
+    }
+
+    // Brick pallets (chest-high blockers) on their floor slabs
+    const pallets: Array<[number, number, number]> = [
+      [-6.0, 0.5, 2.0], [-4.0, 0.5, 2.2], [3.0, 5.5, -2.0], [-8.0, 10.5, 2.0],
+      [2.0, 15.5, 5.0], [-6.0, 20.5, -5.0], [-8.0, 20.5, 4.0],
+    ];
+    for (const [px, py, pz] of pallets) {
+      coll.addBoxCoords(px - 0.7, py, pz - 0.7, px + 0.7, py + 1.05, pz + 0.7, 'wall');
+    }
+
+    // Wooden crates (block + standable tops, incl. the stacked one)
+    const crates: Array<[number, number, number, number]> = [
+      [-8.0, 0.5, -5.0, 1.6], [-6.2, 0.5, -5.3, 1.2], [-7.1, 2.1, -5.1, 1.1],
+      [6.0, 5.5, -6.0, 1.4], [-9.0, 15.5, -2.0, 1.5], [7.0, 20.5, 6.0, 1.3],
+    ];
+    for (const [cx, cy, cz, cs] of crates) {
+      const hs = cs * 0.5;
+      coll.addBoxCoords(cx - hs, cy, cz - hs, cx + hs, cy + cs, cz + hs, 'wall');
+      coll.addBoxCoords(cx - hs, cy + cs - 0.2, cz - hs, cx + hs, cy + cs, cz + hs, 'floor');
+    }
+
     // Skybridge deck floor shell (-35 to -13 at y=15.0..15.4)
     coll.addBoxCoords(-35, 15.0, -1.6, -13, 15.4, 1.6, 'floor');
     // Skybridge side railings (North & South)

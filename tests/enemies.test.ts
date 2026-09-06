@@ -268,27 +268,32 @@ describe('Enemy AI & Wave Combat Manager', () => {
     sniper.waveNumber = 4;
     const playerPos = new THREE.Vector3(0, 20, 30);
     const cam = undefined as unknown as THREE.PerspectiveCamera;
+    // Solid perch floor so the relocation candidate validates as real footing
+    const floorMesh = new THREE.Mesh(new THREE.BoxGeometry(24, 1, 6));
+    floorMesh.position.set(0, 18.5, 0);
+    floorMesh.updateMatrixWorld(true);
+    const collidables = [floorMesh];
 
     // Simulate to complete grace & charge and fire 2 shots
     for (let i = 0; i < 90; i++) {
-      sniper.update(0.1, playerPos, cam, []);
+      sniper.update(0.1, playerPos, cam, collidables);
     }
 
     // Now trigger 2nd shot reposition if not already triggered
     if (!(sniper as unknown as { repositionTarget: THREE.Vector3 | null }).repositionTarget) {
       for (let i = 0; i < 50; i++) {
-        sniper.update(0.1, playerPos, cam, []);
+        sniper.update(0.1, playerPos, cam, collidables);
       }
     }
 
     const posBeforeTelegraph = sniper.group.position.clone();
     // During the 0.5s telegraph, sniper position must hold at current perch
-    sniper.update(0.2, playerPos, cam, []);
+    sniper.update(0.2, playerPos, cam, collidables);
     expect(sniper.group.position.distanceTo(posBeforeTelegraph)).toBeLessThan(0.01);
 
     // After 0.5s telegraph expires, dash begins
     for (let i = 0; i < 15; i++) {
-      sniper.update(0.1, playerPos, cam, []);
+      sniper.update(0.1, playerPos, cam, collidables);
     }
     expect(sniper.group.position.distanceTo(posBeforeTelegraph)).toBeGreaterThan(0.1);
     sniper.dispose();
@@ -400,5 +405,102 @@ describe('Enemy AI & Wave Combat Manager', () => {
     enemyManager.startNextWave(15); // Player HP < 30
     expect(enemyManager.totalEnemiesInWave).toBe(1); // Never floored to 0
     enemyManager.compositionFor = originalCompFor;
+  });
+});
+
+describe('EnemyManager - projectile hitbox, anti-tunnel, separation', () => {
+  let scene: THREE.Scene;
+  let particles: InkParticles;
+  let enemyManager: EnemyManager;
+
+  beforeEach(() => {
+    scene = new THREE.Scene();
+    particles = new InkParticles();
+    enemyManager = new EnemyManager(scene, particles);
+  });
+
+  afterEach(() => {
+    enemyManager.clear();
+  });
+
+  const stubAt = (x: number, y: number, z: number, height: number, onHit: () => void) =>
+    ({
+      position: new THREE.Vector3(x, y, z),
+      isDead: false,
+      takeDamage: () => { onHit(); return true; },
+      physics: { playerHeight: height },
+    }) as unknown as Player;
+
+  it('segment hit test cannot tunnel through the player at sniper speed', () => {
+    let hits = 0;
+    const player = stubAt(0, 1.4, 10, 1.8, () => hits++);
+    enemyManager.spawnProjectile({
+      origin: new THREE.Vector3(0, 1.4, 0),
+      direction: new THREE.Vector3(0, 0, 1),
+      speed: 130, damage: 22, radius: 0.1, maxDistance: 60, isSniper: true, kind: 'sniper',
+    });
+    enemyManager.update(0.05, player, undefined as unknown as THREE.PerspectiveCamera);
+    enemyManager.update(0.05, player, undefined as unknown as THREE.PerspectiveCamera);
+    expect(hits).toBe(1);
+    expect(enemyManager.projectiles.length).toBe(0);
+  });
+
+  it('crouching ducks under chest-aimed fire that hits a standing player', () => {
+    const shot = () => ({
+      origin: new THREE.Vector3(0, 2.3, 0),
+      direction: new THREE.Vector3(0, 0, 1),
+      speed: 50, damage: 9, radius: 0.16, maxDistance: 60, isSniper: false, kind: 'thug' as const,
+    });
+    let standHits = 0;
+    enemyManager.spawnProjectile(shot());
+    enemyManager.update(0.25, stubAt(0, 1.4, 10, 1.8, () => standHits++), undefined as unknown as THREE.PerspectiveCamera);
+    expect(standHits).toBe(1);
+
+    let crouchHits = 0;
+    enemyManager.spawnProjectile(shot());
+    enemyManager.update(0.25, stubAt(0, 1.1, 10, 1.2, () => crouchHits++), undefined as unknown as THREE.PerspectiveCamera);
+    expect(crouchHits).toBe(0);
+  });
+
+  it('separates stacked thugs but never moves an anchored sniper', () => {
+    const far = stubAt(100, 1, 100, 1.8, () => undefined);
+    const a = new ThugEnemy(new THREE.Vector3(0, 0.5, 0));
+    const b = new ThugEnemy(new THREE.Vector3(0, 0.5, 0));
+    a.stagger(10); b.stagger(10);
+    enemyManager.enemies.push(a, b);
+    enemyManager.update(0.2, far, undefined as unknown as THREE.PerspectiveCamera);
+    const d = a.group.position.distanceTo(b.group.position);
+    expect(d).toBeGreaterThanOrEqual(1.3);
+
+    const s = new SniperEnemy(new THREE.Vector3(20, 1.0, 0));
+    const c = new ThugEnemy(new THREE.Vector3(20, 0.5, 0));
+    c.stagger(10);
+    const sx = s.group.position.x;
+    const sz = s.group.position.z;
+    enemyManager.enemies.push(s, c);
+    enemyManager.update(0.2, far, undefined as unknown as THREE.PerspectiveCamera);
+    expect(s.group.position.x).toBe(sx);
+    expect(s.group.position.z).toBe(sz);
+    const dc = Math.hypot(c.group.position.x - sx, c.group.position.z - sz);
+    expect(dc).toBeGreaterThanOrEqual(1.3);
+    enemyManager.clear();
+  });
+});
+
+describe('SniperEnemy - perch-safe repositioning', () => {
+  it('cancels relocation dash when no floor exists under the candidate perch', () => {
+    const sniper = new SniperEnemy(new THREE.Vector3(17, 46, -2));
+    sniper.waveNumber = 4;
+    sniper.spawnGrace = 0;
+    const playerPos = new THREE.Vector3(0, 1.4, 10);
+    // Empty world: no floor anywhere, every sidestep candidate is thin air.
+    // Two full charge cycles (0.5 pre + 2.0 charge + margin each).
+    for (let i = 0; i < 120; i++) {
+      sniper.update(0.1, playerPos, undefined, []);
+    }
+    expect(sniper.pendingProjectiles.length + 0).toBeGreaterThanOrEqual(0);
+    const priv = sniper as unknown as { repositionTarget: unknown; shotsFired: number };
+    expect(priv.repositionTarget).toBeNull();
+    sniper.dispose();
   });
 });

@@ -61,7 +61,7 @@ export class ThugEnemy extends Enemy {
    *   exceeding the >= 4.0s minimum requirement.
    */
   constructor(position: THREE.Vector3, customWaypoints?: THREE.Vector3[]) {
-    // 90 HP: dies to 1 sniper headshot (300) or 4 pistol shots (112)
+    // 90 HP: dies to 1 sniper headshot (300) or 3 pistol body shots (126)
     super('thug', 90, position);
     this.scoreValue = 100;
     this.xpValue = 25;

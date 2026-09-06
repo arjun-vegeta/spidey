@@ -33,7 +33,7 @@ export class HUD {
   private hpNumberElement!: HTMLElement;
   private hpBarCrosshatch!: HTMLElement;
   private ammoElement!: HTMLElement;
-  private tallyMarksElement!: HTMLElement;
+  private ammoBarFill!: HTMLElement;
   private weaponListElement!: HTMLElement;
   private activeWeaponNameElement!: HTMLElement;
   private activeWeaponDescElement!: HTMLElement;
@@ -56,7 +56,6 @@ export class HUD {
   private reloadBarFill!: HTMLElement;
 
   private hitmarkerTimer: number = 0;
-  private isHeadshotHit: boolean = false;
   private announcementTimer: number = 0;
   private lastAmmoText: string = '';
   private lastScoreText: string = '';
@@ -143,7 +142,7 @@ export class HUD {
           <div class="reticle-dist">45m</div>
           <div class="reticle-bracket-r">]</div>
         </div>
-        <div id="hitmarker" class="hitmarker-ink">✕</div>
+        <div id="hitmarker" class="hitmarker-ink"><span class="hm-a"></span><span class="hm-b"></span></div>
       </div>
 
       <!-- Bottom Left: Health & Ammo with Tally Marks -->
@@ -157,7 +156,9 @@ export class HUD {
         </div>
         <div class="ammo-container">
           <div id="ammo-numbers" class="ammo-numbers-text">12<span class="ammo-sub">/60</span></div>
-          <div id="ammo-tallies" class="ammo-tallies-text">|||| |||| ||</div>
+          <div id="ammo-bar-box" class="ammo-bar-box">
+            <div id="ammo-bar-fill" class="ammo-bar-fill"></div>
+          </div>
           <div id="reload-bar-box" class="reload-bar-box" style="display:none">
             <div id="reload-bar-fill" class="reload-bar-fill"></div>
           </div>
@@ -223,7 +224,7 @@ export class HUD {
           <label class="pause-row">VOLUME <input id="set-vol" type="range" min="0" max="1" step="0.05"><span id="set-vol-v"></span></label>
           <label class="pause-row">FOV <input id="set-fov" type="range" min="70" max="90" step="1"><span id="set-fov-v"></span></label>
           <label class="pause-row pause-check"><input id="set-map" type="checkbox"> MINIMAP (N)</label>
-          <div class="pause-keys">WASD move · Right-click swing · F zip · Q aim · R reload · M mute</div>
+          <div class="pause-keys">WASD walk · SHIFT sprint · C crouch · E web (tap) · SPACE sling · F zip · Q aim · R reload · M mute</div>
         </div>
       </div>
     `;
@@ -235,7 +236,7 @@ export class HUD {
     this.hpNumberElement = this.container.querySelector('#hp-number')!;
     this.hpBarCrosshatch = this.container.querySelector('#hp-bar-hatch')!;
     this.ammoElement = this.container.querySelector('#ammo-numbers')!;
-    this.tallyMarksElement = this.container.querySelector('#ammo-tallies')!;
+    this.ammoBarFill = this.container.querySelector('#ammo-bar-fill')!;
     this.reloadBarBox = this.container.querySelector('#reload-bar-box')!;
     this.reloadBarFill = this.container.querySelector('#reload-bar-fill')!;
     this.weaponListElement = this.container.querySelector('#weapon-list')!;
@@ -405,25 +406,15 @@ export class HUD {
   }
 
   public triggerHitmarker(isHeadshot: boolean = false, killed: boolean = false): void {
-    if (killed) {
-      this.hitmarkerTimer = 0.5;
-      this.isHeadshotHit = isHeadshot;
-      if (this.hitmarkerElement) {
-        this.hitmarkerElement.textContent = '×!';
-        this.hitmarkerElement.style.color = isHeadshot ? '#d63031' : '#152778';
-        this.hitmarkerElement.style.transform = 'scale(1.6)';
-        this.hitmarkerElement.style.opacity = '1';
-      }
-    } else {
-      this.hitmarkerTimer = 0.18;
-      this.isHeadshotHit = isHeadshot;
-      if (this.hitmarkerElement) {
-        this.hitmarkerElement.textContent = isHeadshot ? '!' : '✕';
-        this.hitmarkerElement.style.color = isHeadshot ? '#d63031' : '#152778';
-        this.hitmarkerElement.style.transform = isHeadshot ? 'scale(1.8)' : 'scale(1.3)';
-        this.hitmarkerElement.style.opacity = '1';
-      }
-    }
+    const el = this.hitmarkerElement;
+    if (!el) return;
+    this.hitmarkerTimer = killed ? 0.5 : 0.18;
+    el.classList.remove('show', 'headshot', 'kill');
+    // Force reflow to re-trigger the pop keyframes on rapid hits
+    void el.offsetWidth;
+    el.classList.add('show');
+    if (killed) el.classList.add('kill');
+    else if (isHeadshot) el.classList.add('headshot');
   }
 
   public showWaveAnnouncement(
@@ -553,11 +544,8 @@ export class HUD {
 
     this.hpNumberElement.textContent = Math.ceil(hp).toString();
     this.hpBarCrosshatch.style.width = `${hp}%`;
-    if (hp < 30) {
-      this.hpNumberElement.style.color = '#d63031';
-    } else {
-      this.hpNumberElement.style.color = '#152778';
-    }
+    this.hpBarCrosshatch.classList.toggle('hp-low', hp < 30);
+    this.hpNumberElement.classList.toggle('hp-critical', hp < 30);
 
     // 4. Weapon & Ammo
     const wepMgr = player.weaponManager;
@@ -566,7 +554,6 @@ export class HUD {
 
     if (activeWep.isReloading) {
       this.ammoElement.textContent = `RELOADING...`;
-      this.tallyMarksElement.textContent = ``;
       this.reloadBarBox.style.display = 'block';
       const reloadPct = Math.min(100, Math.max(0, (activeWep.reloadProgress / Math.max(0.01, activeWep.reloadTime)) * 100));
       this.reloadBarFill.style.width = `${reloadPct.toFixed(1)}%`;
@@ -576,15 +563,13 @@ export class HUD {
       const ammoKey = `${activeWep.currentAmmo}/${activeWep.reserveAmmo}`;
       if (ammoKey !== this.lastAmmoText) {
         this.ammoElement.innerHTML = `${activeWep.currentAmmo}<span class="ammo-sub">/${activeWep.reserveAmmo}</span>`;
-        // Sketched tally marks (groups of 4 with a slash, or |||| ||||)
-        this.tallyMarksElement.textContent = this.generateTallyMarks(activeWep.currentAmmo);
         this.lastAmmoText = ammoKey;
       }
-      if (activeWep.currentAmmo <= Math.ceil(activeWep.magazineSize * 0.25)) {
-        this.ammoElement.style.color = '#d63031';
-      } else {
-        this.ammoElement.style.color = '';
-      }
+      const magFrac = activeWep.magazineSize > 0 ? activeWep.currentAmmo / activeWep.magazineSize : 0;
+      this.ammoBarFill.style.width = `${Math.round(Math.max(0, Math.min(1, magFrac)) * 100)}%`;
+      const lowAmmo = activeWep.currentAmmo <= Math.ceil(activeWep.magazineSize * 0.25);
+      this.ammoElement.classList.toggle('ammo-low', lowAmmo);
+      this.ammoBarFill.classList.toggle('ammo-low-fill', lowAmmo);
     }
 
     this.activeWeaponNameElement.textContent = activeWep.name;
@@ -600,7 +585,7 @@ export class HUD {
         this.swingStatusElement.className = 'swing-status-badge swing-locked';
       }
     } else {
-      this.swingStatusElement.textContent = activeWep.usableWhileSwinging ? 'GROUND / AERIAL READY' : 'TWO-HANDED WEAPON';
+      this.swingStatusElement.textContent = activeWep.usableWhileSwinging ? 'GROUND / AERIAL READY' : 'HEAVY · LOCKS WHILE SWINGING';
       this.swingStatusElement.className = 'swing-status-badge';
     }
 
@@ -677,7 +662,7 @@ export class HUD {
     if (this.hitmarkerTimer > 0) {
       this.hitmarkerTimer -= dt;
       if (this.hitmarkerTimer <= 0) {
-        this.hitmarkerElement.style.opacity = '0';
+        this.hitmarkerElement.classList.remove('show', 'headshot', 'kill');
       }
     }
 
@@ -759,20 +744,6 @@ export class HUD {
     if (this.dmgEdgeB) this.dmgEdgeB.style.opacity = (b * 0.85).toFixed(2);
     if (this.dmgEdgeL) this.dmgEdgeL.style.opacity = (l * 0.85).toFixed(2);
     if (this.dmgEdgeR) this.dmgEdgeR.style.opacity = (r * 0.85).toFixed(2);
-  }
-
-  private generateTallyMarks(ammo: number): string {
-    const clamped = Math.min(ammo, 32);
-    let result = '';
-    const fives = Math.floor(clamped / 5);
-    const rem = clamped % 5;
-    for (let i = 0; i < fives; i++) {
-      result += '|||| ';
-    }
-    for (let i = 0; i < rem; i++) {
-      result += '|';
-    }
-    return result;
   }
 
   private updateScorePopups(dt: number): void {

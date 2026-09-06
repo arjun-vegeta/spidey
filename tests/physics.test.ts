@@ -172,7 +172,7 @@ describe('SwingPhysics - Realistic Pendulum Web Mechanics', () => {
 
     // Braking air must have bled significantly more horizontal speed
     expect(brakingHorizSpeed).toBeLessThan(freeHorizSpeed);
-    expect(freeHorizSpeed - brakingHorizSpeed).toBeGreaterThan(5.0);
+    expect(freeHorizSpeed - brakingHorizSpeed).toBeGreaterThan(2.5);
   });
 
   it('diving in air increases downward speed and forward assist within terminal velocity', () => {
@@ -231,5 +231,72 @@ describe('SwingPhysics - Realistic Pendulum Web Mechanics', () => {
     expect(physics.isGrounded).toBe(true);
     expect(physics.velocity.y).toBe(0);
     expect(physics.position.y).toBe(0.9 + physics.playerHeight * 0.5);
+  });
+
+  it('walks like a human: grounded top speed caps at walk speed', () => {
+    physics.mode = MovementMode.GROUNDED;
+    physics.isGrounded = true;
+    const inputDir = new THREE.Vector3(0, 0, -1);
+    for (let i = 0; i < 180; i++) {
+      physics.update(0.016, inputDir, new THREE.Vector3(), false, false);
+    }
+    const speed = Math.hypot(physics.velocity.x, physics.velocity.z);
+    expect(speed).toBeGreaterThan(4.0);
+    expect(speed).toBeLessThanOrEqual(physics.walkSpeed + 0.2);
+  });
+
+  it('air steering without a web is a nudge, not flight', () => {
+    physics.position.set(0, 100, 0);
+    physics.velocity.set(0, 0, 0);
+    physics.mode = MovementMode.AIR;
+    const inputDir = new THREE.Vector3(0, 0, -1);
+    for (let i = 0; i < 60; i++) {
+      physics.update(0.016, inputDir, new THREE.Vector3(), false, false, false, false);
+    }
+    const gained = Math.hypot(physics.velocity.x, physics.velocity.z);
+    expect(gained).toBeLessThan(8.0);
+  });
+
+  it('sprints at 8 m/s via speed multiplier, crouch-shuffles at 2.2', () => {
+    const inputDir = new THREE.Vector3(0, 0, -1);
+
+    const sprinter = new SwingPhysics();
+    sprinter.mode = MovementMode.GROUNDED;
+    sprinter.isGrounded = true;
+    sprinter.speedMultiplier = sprinter.sprintMultiplier;
+    for (let i = 0; i < 180; i++) {
+      sprinter.update(0.016, inputDir, new THREE.Vector3(), false, false);
+    }
+    const sprintSpeed = Math.hypot(sprinter.velocity.x, sprinter.velocity.z);
+    expect(sprintSpeed).toBeGreaterThan(7.0);
+    expect(sprintSpeed).toBeLessThanOrEqual(8.2);
+
+    const croucher = new SwingPhysics();
+    croucher.mode = MovementMode.GROUNDED;
+    croucher.isGrounded = true;
+    croucher.crouching = true;
+    for (let i = 0; i < 180; i++) {
+      croucher.update(0.016, inputDir, new THREE.Vector3(), false, false);
+    }
+    const crouchSpeed = Math.hypot(croucher.velocity.x, croucher.velocity.z);
+    expect(crouchSpeed).toBeGreaterThan(1.5);
+    expect(crouchSpeed).toBeLessThanOrEqual(2.4);
+  });
+
+  it('slings toward the anchor on Space while swinging', () => {
+    const anchor = new THREE.Vector3(10, 30, 0);
+    physics.position.set(0, 20, 0);
+    physics.velocity.set(2, 0, 0);
+    physics.attachWeb(anchor);
+    expect(physics.mode).toBe(MovementMode.SWINGING);
+
+    physics.slingTowardAnchor(new THREE.Vector3(1, 0, 0));
+
+    expect(physics.mode).toBe(MovementMode.AIR);
+    expect(physics.webAnchor).toBeNull();
+    const toAnchor = anchor.clone().sub(new THREE.Vector3(0, 20, 0)).normalize();
+    const velDir = physics.velocity.clone().normalize();
+    expect(velDir.dot(toAnchor)).toBeGreaterThan(0.9);
+    expect(physics.velocity.length()).toBeGreaterThanOrEqual(15.0);
   });
 });

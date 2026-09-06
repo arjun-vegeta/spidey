@@ -52,6 +52,33 @@ export interface SpawnNode {
 }
 
 /**
+ * Pure segment-vs-player-capsule test (XZ circle + height band).
+ * Returns true when the travel segment p0->p1 passes within hitR of the
+ * player's vertical axis while inside [minY, maxY]. Exported for tests.
+ */
+export function segmentHitsPlayer(
+  p0: THREE.Vector3,
+  p1: THREE.Vector3,
+  hitR: number,
+  playerPos: THREE.Vector3,
+  minY: number,
+  maxY: number
+): boolean {
+  const ex = p1.x - p0.x;
+  const ez = p1.z - p0.z;
+  const fx = p0.x - playerPos.x;
+  const fz = p0.z - playerPos.z;
+  const a = ex * ex + ez * ez;
+  let t = a > 1e-9 ? -(fx * ex + fz * ez) / a : 0;
+  t = t < 0 ? 0 : t > 1 ? 1 : t;
+  const cx = p0.x + ex * t - playerPos.x;
+  const cz = p0.z + ez * t - playerPos.z;
+  if (cx * cx + cz * cz > hitR * hitR) return false;
+  const cy = p0.y + (p1.y - p0.y) * t;
+  return cy >= minY && cy <= maxY;
+}
+
+/**
  * Manages wave spawning, active enemies, enemy projectiles,
  * bullet hit detection, score/combo calculation, and wave progression.
  */
@@ -714,23 +741,72 @@ export class EnemyManager {
       }
     }
 
+    // 3b. Separation: same-floor enemies never stack into one blob.
+    // Snipers are anchored perches — everyone else walks around them.
+    this.separateEnemies();
+
     // 4. Update and resolve enemy projectiles
     this.updateProjectiles(dt, player, camera);
+  }
+
+  private separateEnemies(): void {
+    const list = this.enemies;
+    const minD = 1.4;
+    for (let i = 0; i < list.length; i++) {
+      const a = list[i];
+      if (a.isDead) continue;
+      const pa = a.group.position;
+      const aAnchored = a.type === 'sniper';
+      for (let j = i + 1; j < list.length; j++) {
+        const b = list[j];
+        if (b.isDead) continue;
+        const pb = b.group.position;
+        if (Math.abs(pa.y - pb.y) > 2.0) continue;
+        let dx = pb.x - pa.x;
+        let dz = pb.z - pa.z;
+        const d2 = dx * dx + dz * dz;
+        if (d2 >= minD * minD) continue;
+        if (d2 > 1e-6) {
+          const d = Math.sqrt(d2);
+          const push = (minD - d) / d;
+          dx *= push;
+          dz *= push;
+        } else {
+          dx = minD;
+          dz = 0;
+        }
+        const bAnchored = b.type === 'sniper';
+        if (!aAnchored && !bAnchored) {
+          pa.x -= dx * 0.5;
+          pa.z -= dz * 0.5;
+          pb.x += dx * 0.5;
+          pb.z += dz * 0.5;
+        } else if (aAnchored && !bAnchored) {
+          pb.x += dx;
+          pb.z += dz;
+        } else if (!aAnchored && bAnchored) {
+          pa.x -= dx;
+          pa.z -= dz;
+        }
+      }
+    }
   }
 
   private tmpFwd: THREE.Vector3 = new THREE.Vector3();
   private tmpRight: THREE.Vector3 = new THREE.Vector3();
   private tmpDir: THREE.Vector3 = new THREE.Vector3();
   private static readonly UP: THREE.Vector3 = new THREE.Vector3(0, 1, 0);
-
   /**
    * Advances projectiles, checks player hitboxes, and handles architecture collisions
    */
   private updateProjectiles(dt: number, player: Player, camera?: THREE.PerspectiveCamera): void {
     const playerPos = player.position;
     const playerRadius = 0.65;
-    const playerMinY = playerPos.y - 0.3;
-    const playerMaxY = playerPos.y + 1.9;
+    // Dynamic hitbox: crouching (1.2m) genuinely dodges chest-aimed fire.
+    // playerPos is body CENTER, so the band is center +/- half height.
+    const pHalfH = ((player.physics ? player.physics.playerHeight : 1.8) * 0.5);
+    const playerMinY = playerPos.y - pHalfH;
+    const playerMaxY = playerPos.y + pHalfH + 0.35;
 
     for (let i = this.projectiles.length - 1; i >= 0; i--) {
       const proj = this.projectiles[i];
@@ -750,12 +826,13 @@ export class EnemyManager {
 
       // Check collision and near-miss against Player (skip while dead)
       if (!player.isDead) {
-        const dx = proj.position.x - playerPos.x;
-        const dz = proj.position.z - playerPos.z;
-        const horizDist = Math.hypot(dx, dz);
-        const isWithinPlayerHeight = proj.position.y >= playerMinY && proj.position.y <= playerMaxY;
-
-        if (horizDist <= (playerRadius + proj.radius) && isWithinPlayerHeight) {
+        // Segment-vs-capsule: test the whole travel segment, not just the
+        // endpoint — at swing speed + bullet speed the point test tunnels
+        // straight through the body between frames.
+        if (segmentHitsPlayer(
+          this.tmpPrev, proj.position, proj.radius + playerRadius,
+          playerPos, playerMinY, playerMaxY
+        )) {
           const wasAlive = !player.isDead;
           player.takeDamage(proj.damage, proj.position);
           if (this.onPlayerDamaged) this.onPlayerDamaged(proj.position);
@@ -768,6 +845,9 @@ export class EnemyManager {
         }
 
         // Near-miss whiz when an enemy projectile passes <2m without hitting
+        const dx = proj.position.x - playerPos.x;
+        const dz = proj.position.z - playerPos.z;
+        const horizDist = Math.hypot(dx, dz);
         if (!proj.nearMissTriggered && horizDist < 2.0 && proj.position.y >= (playerMinY - 0.8) && proj.position.y <= (playerMaxY + 0.8)) {
           proj.nearMissTriggered = true;
           soundManager.playNearMissWhiz();

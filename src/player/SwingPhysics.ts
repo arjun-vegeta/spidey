@@ -36,11 +36,15 @@ export class SwingPhysics {
   // 10. Reel rates: reel-in (Shift) shortens rope at 16 m/s; reel-out (Ctrl/X) lengthens at 14 m/s (clamped 6..90m).
   //
   // FINAL DESIGN & TUNING DECISIONS (Section 24.1):
-  // - Walk speed (14.0 m/s): KEPT at 14.0. Reason: With Shift dedicated strictly to web reel-in (no sprint key),
-  //   a standard 7.0 m/s human walk feels sluggish across 50-80m skyscraper gaps. 14.0 m/s gives Spider-Man level
-  //   parkour agility on roofs/streets, reaches full speed in 0.25s (friction 12), and ADS slows to 60% (8.4 m/s).
-  // - Air brake rate (36.0 m/s^2): 2x base air acceleration (18.0 * 2.0). Holding S/back in mid-air bleeds horizontal
-  //   speed down to zero smoothly in ~0.7s from 25 m/s, providing precise perch landing without reversing direction.
+  // - Walk speed (5.0 m/s): HUMAN. Spider-Man walks on the ground like a person;
+  //   the web is what flies. Full speed in ~0.4s, full stop in ~0.3s, ADS 60%.
+  // - Sprint (Shift, ground only, 8 m/s): a run, not flight. Never applies in air
+  //   or while swinging (Shift reels rope there). No ADS sprint.
+  // - Crouch (C, ground only, 2.2 m/s, 1.2m tall): sit/crouch for cover and cover
+  //   fire. Standing back up needs headroom or you stay down.
+  // - Air control (6.5 m/s^2): deliberately weak. Air steering without a web is a
+  //   nudge, not flight. Brake (S) bleeds at 16 m/s^2 for perch landings.
+  // - Jump (8.8 m/s): ~1.5m hop under 26 m/s^2 gravity. Athletic, not lunar.
   // - Dive rate (+16.0 m/s^2 down, +8.0 m/s^2 forward, 0.5 rad/s pitch assist): Holding Ctrl in air adds downward
   //   momentum assist + forward glide for high-speed dive-bombs, strictly clamped at terminalVelocity (65.0 m/s).
   // - Zip ease curve (5.0m -> 2.5m, 62 m/s -> 28 m/s): Linear ease over final 5 meters ensures player arrives at
@@ -79,9 +83,6 @@ export class SwingPhysics {
   // Hard-landing control damp timer (0.25s control damp after landing > 25 m/s)
   public controlDampTimer: number = 0;
 
-  // Air brake rate multiplier (2x faster horizontal speed bleed)
-  public airBrakeMultiplier: number = 2.0;
-
   // Web zip state
   public zipTarget: THREE.Vector3 | null = null;
   public zipSpeed: number = 62.0; // Rapid zip pull speed
@@ -97,6 +98,20 @@ export class SwingPhysics {
   public isGrounded: boolean = false;
   public playerHeight: number = 1.8;
   public playerRadius: number = 0.6;
+
+  // Human locomotion (m/s). Web-swinging is the fast layer, not feet.
+  public walkSpeed: number = 5.0;
+  public sprintMultiplier: number = 1.6; // Shift on ground: 8 m/s sprint
+  public crouchSpeed: number = 2.2; // C on ground: sit/crouch shuffle
+  public crouching: boolean = false; // set per-frame by Player
+  public standHeight: number = 1.8;
+  public crouchHeight: number = 1.2;
+  public groundAccelRate: number = 7.0;
+  public groundFriction: number = 10.0;
+  public airControlAccel: number = 6.5;
+  public airBrakeDecel: number = 16.0;
+  public jumpSpeed: number = 8.8;
+  public wallRunSpeed: number = 9.0;
 
   // ADS move-slow multiplier (set per-frame by Player, 1 = full speed)
   public speedMultiplier: number = 1.0;
@@ -166,6 +181,35 @@ export class SwingPhysics {
     this.isWebTaut = false;
 
     return releasedVel;
+  }
+
+  /**
+   * Space while swinging: sling TOWARD the anchor. The web yanks you to the
+   * point you shot, keeping at least slingMinSpeed so it always feels like a yank.
+   */
+  public slingTowardAnchor(lookDir?: THREE.Vector3, slingMinSpeed: number = 17.0, lift: number = 4.5): void {
+    if (this.mode !== MovementMode.SWINGING || !this.webAnchor) return;
+    const toAnchor = this._tempVecA.subVectors(this.webAnchor, this.position);
+    if (toAnchor.lengthSq() > 1e-6) toAnchor.normalize();
+    else toAnchor.set(0, 1, 0);
+    const speed = Math.max(this.velocity.length(), slingMinSpeed);
+    this.velocity.copy(toAnchor).multiplyScalar(speed);
+    this.velocity.y += lift;
+    if (lookDir) {
+      const flatLook = this._tempVecB.set(lookDir.x, 0, lookDir.z);
+      if (flatLook.lengthSq() > 1e-4) {
+        flatLook.normalize();
+        this.velocity.addScaledVector(flatLook, 3.0);
+      }
+    }
+    if (this.velocity.length() > this.terminalVelocity) {
+      this.velocity.normalize().multiplyScalar(this.terminalVelocity);
+    }
+    this.mode = MovementMode.AIR;
+    this.webAnchor = null;
+    this.webAnchorNormal = null;
+    this.isWebTaut = false;
+    this.slackTimer = 0;
   }
 
   /**
@@ -413,8 +457,7 @@ export class SwingPhysics {
     }
 
     // Wall run velocity: run speed along tangent, slight downward gravity
-    const wallRunSpeed = 16.0;
-    this.velocity.copy(wallTangent).multiplyScalar(wallRunSpeed);
+    this.velocity.copy(wallTangent).multiplyScalar(this.wallRunSpeed);
     this.velocity.y = -3.0; // Slow descent
   }
 
@@ -424,15 +467,15 @@ export class SwingPhysics {
   public wallJump(): void {
     this.mode = MovementMode.AIR;
     // Impulse outward along wall normal + upward
-    this.velocity.addScaledVector(this.wallNormal, 14.0);
-    this.velocity.y = 14.0;
+    this.velocity.addScaledVector(this.wallNormal, 8.0);
+    this.velocity.y = Math.max(this.velocity.y, 0) + 10.0;
     this.wallRunTimer = 0;
   }
 
   public detachFromWall(): void {
     this.mode = MovementMode.AIR;
-    this.velocity.addScaledVector(this.wallNormal, 4.0);
-    this.velocity.y = 2.0;
+    this.velocity.addScaledVector(this.wallNormal, 2.0);
+    this.velocity.y = Math.max(this.velocity.y, 1.0);
     this.wallRunTimer = 0;
   }
 
@@ -449,16 +492,16 @@ export class SwingPhysics {
     // Gravity
     this.velocity.y -= this.gravity * dt;
 
-    // Air steering control (halved if control-damped after hard landing)
+    // Air steering is a weak nudge (halved if control-damped after hard landing)
     const accelDamp = this.controlDampTimer > 0 ? 0.5 : 1.0;
-    const baseAirAccel = 18.0 * accelDamp;
+    const baseAirAccel = this.airControlAccel * accelDamp;
 
-    // Air brake: holding S/back in midair bleeds horizontal speed 2x faster (36 m/s^2)
+    // Air brake: holding S/back in midair bleeds horizontal speed fast
     if (braking) {
       const hVel = this._tempVecA.set(this.velocity.x, 0, this.velocity.z);
       const hSpeed = hVel.length();
       if (hSpeed > 0.01) {
-        const brakeDecel = baseAirAccel * this.airBrakeMultiplier;
+        const brakeDecel = this.airBrakeDecel * accelDamp;
         const newSpeed = Math.max(0, hSpeed - brakeDecel * dt);
         const factor = newSpeed / hSpeed;
         this.velocity.x *= factor;
@@ -485,34 +528,33 @@ export class SwingPhysics {
   }
 
   /**
-   * Ground movement with friction, acceleration, and step handling
+   * Ground movement: brisk human walk. Snappy but capped — speed comes from webs.
    */
   private updateGrounded(dt: number, inputDir: THREE.Vector3): void {
-    // Ground friction
-    const friction = 12.0;
-    const horizontalVel = this._tempVecA.set(this.velocity.x, 0, this.velocity.z);
-    horizontalVel.multiplyScalar(Math.max(0, 1 - friction * dt));
-    this.velocity.x = horizontalVel.x;
-    this.velocity.z = horizontalVel.z;
-
-    // Ground acceleration (halved if control-damped after hard landing)
+    // With input: drive toward walk speed. Without: friction stops you.
+    // (Friction never fights the drive — that capped speed at 44% of target.)
     if (inputDir.lengthSq() > 0.01) {
       const accelDamp = this.controlDampTimer > 0 ? 0.5 : 1.0;
-      const groundSpeed = 14.0 * this.speedMultiplier;
-      const targetVel = this._tempVecB.copy(inputDir).normalize().multiplyScalar(groundSpeed);
-      this.velocity.x += (targetVel.x - this.velocity.x) * (14.0 * accelDamp) * dt;
-      this.velocity.z += (targetVel.z - this.velocity.z) * (14.0 * accelDamp) * dt;
+      const target = this.crouching ? this.crouchSpeed : this.walkSpeed * this.speedMultiplier;
+      const targetVel = this._tempVecB.copy(inputDir).normalize().multiplyScalar(target);
+      const rate = Math.min(1, this.groundAccelRate * accelDamp * dt);
+      this.velocity.x += (targetVel.x - this.velocity.x) * rate;
+      this.velocity.z += (targetVel.z - this.velocity.z) * rate;
+    } else {
+      const f = Math.max(0, 1 - this.groundFriction * dt);
+      this.velocity.x *= f;
+      this.velocity.z *= f;
     }
 
     this.velocity.y = 0;
   }
 
   /**
-   * Ground jump
+   * Ground jump: athletic hop, not a moon launch
    */
   public jump(): void {
     if (this.isGrounded || this.coyoteTimer > 0) {
-      this.velocity.y = 13.5;
+      this.velocity.y = this.jumpSpeed;
       this.isGrounded = false;
       this.coyoteTimer = 0;
       this.jumpBufferTimer = 0;
@@ -524,6 +566,7 @@ export class SwingPhysics {
     this.position.copy(spawn);
     this.velocity.set(0, 0, 0);
     this.mode = MovementMode.AIR;
+    this.crouching = false;
     this.webAnchor = null;
     this.webAnchorNormal = null;
     this.zipTarget = null;

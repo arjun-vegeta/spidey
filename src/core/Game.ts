@@ -423,7 +423,7 @@ export class Game {
     const keys = this.input.keys;
     switch (this.obStage) {
       case 0:
-        this.hud.showHint('WASD MOVE · MOUSE LOOK');
+        this.hud.showHint('WASD WALK · MOUSE LOOK');
         if (keys['w'] || keys['a'] || keys['s'] || keys['d']) this.obStage = 1;
         break;
       case 1:
@@ -431,13 +431,13 @@ export class Game {
           this.obSwung = true;
           this.obStage = 2;
         } else if (!this.physicsGrounded() && webTarget && webTarget.isValid) {
-          this.hud.showHint('HOLD RIGHT-CLICK TO SWING');
+          this.hud.showHint('TAP E TO GRAB A WEB');
         } else {
-          this.hud.showHint('JUMP, THEN HOLD RIGHT-CLICK TO SWING');
+          this.hud.showHint('JUMP, THEN TAP E TO WEB-SWING');
         }
         break;
       case 2:
-        this.hud.showHint('RELEASE + SPACE FOR BOOST');
+        this.hud.showHint('SPACE: SLING THERE · E: GRAB ELSEWHERE');
         if (this.obSwung && !this.player.isSwinging) this.obStage = 3;
         break;
       default:

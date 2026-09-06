@@ -1,15 +1,18 @@
 /**
  * KEYMAP CONSTANTS & CONTROLS BINDINGS (Milestone 2 Finalized):
- * - W / ArrowUp: Move forward (ground/air) | Tangential momentum pump (swinging).
- * - S / ArrowDown: Move backward (ground) | Air brake (air, 2x horizontal speed bleed).
+ * - W / ArrowUp: Walk forward (ground) | Weak air nudge (air) | Tangential pump (swinging).
+ * - S / ArrowDown: Walk backward (ground) | Air brake (air, fast horizontal bleed).
  * - A / D / ArrowLeft / ArrowRight: Strafe (ground/air) | Arc steering lean (swinging).
- * - Shift / C: Web reel-in ONLY (rope length shortening). No sprint! Sprint is
- *   intentionally omitted to avoid conflicting with web reeling and maintain purity.
+ * - Shift: SPRINT on ground (hold + W) | Web reel-in while swinging.
+ *   No sprint in air — air feet don't run.
+ * - C: CROUCH / sit on ground (cover height) | Web reel-in while swinging.
+ *   Standing back up needs headroom or you stay down.
  * - Ctrl / X: Web reel-out (swinging) | Dive assist (air: pitch assist + speed boost).
- * - Space: Jump (ground) | Slingshot release boost (swinging) | Zip cancel boost (web zip).
- * - Right-Click / E: Web attach & hold swing.
+ * - Space: Jump (ground) | SLING to anchor (swinging: web yanks you to the shot point).
+ * - E / Right-Click (tap): Shoot web & STAY attached. Tap E again mid-swing to
+ *   drop the line and grab a new anchor. Tap E with no target = dry thwip.
  * - F: Web zip to target anchor / ledge.
- * - Left-Click / V / Enter: Primary fire active weapon.
+ * - Left-Click / V / Enter: Primary fire active weapon (pistol works while swinging).
  * - Q / Middle-Click: Aim Down Sights (ADS) / Sniper scope toggle.
  * - 1, 2, 3 / Mouse Wheel: Weapon select (Pistol, SMG, Sniper).
  * - R: Reload weapon.
@@ -182,10 +185,11 @@ export class InputManager {
   public isMovingLeft(): boolean { return !!(this.keys['a'] || this.keys['arrowleft']); }
   public isMovingRight(): boolean { return !!(this.keys['d'] || this.keys['arrowright']); }
   public isJumping(): boolean { return !!this.keys[' ']; }
+  public isSprintHeld(): boolean { return !!this.keys['shift']; }
+  public isCrouchHeld(): boolean { return !!this.keys['c']; }
   public isReelingIn(): boolean { return !!(this.keys['shift'] || this.keys['c']); }
   public isReelingOut(): boolean { return !!(this.keys['control'] || this.keys['x']); }
   public isDiving(): boolean { return !!(this.keys['control'] || this.keys['x']); }
   public isFiring(): boolean { return !!(this.mouseButtons[0] || this.keys['v'] || this.keys['enter']); }
-  public isWebHolding(): boolean { return !!(this.mouseButtons[2] || this.keys['e']); }
   public isZoomHolding(): boolean { return !!(this.keys['q'] || this.mouseButtons[1]); }
 }

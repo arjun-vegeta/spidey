@@ -95,6 +95,24 @@ export class WorldCollider {
   }
 
   /**
+   * Lowest floor underside above the head at (x,z). Null when open sky.
+   * Used for the ceiling clamp so jumps can't pass through slabs.
+   */
+  public ceilingAt(x: number, headY: number, z: number): number | null {
+    const idx = this.cellBoxes(x, z);
+    if (!idx) return null;
+    let best: number | null = null;
+    for (let k = 0; k < idx.length; k++) {
+      const b = this.boxes[idx[k]];
+      if (b.tag !== 'floor') continue;
+      if (x < b.minX - 0.3 || x > b.maxX + 0.3 || z < b.minZ - 0.3 || z > b.maxZ + 0.3) continue;
+      if (b.minY < headY) continue;
+      if (best === null || b.minY < best) best = b.minY;
+    }
+    return best;
+  }
+
+  /**
    * Horizontal push-out of a circle (x,z,r) against wall boxes overlapping [minY,maxY].
    * Writes resolved position + normal into out (reuse one scratch object, zero garbage).
    */

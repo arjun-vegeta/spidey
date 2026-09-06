@@ -158,3 +158,35 @@ describe('WebShooter - State & RopeState Enum Lifecycle', () => {
     expect(shooter.ropeState).toBe(RopeState.SLACK);
   });
 });
+
+describe('WebShooter - sticky line and mid-swing re-target', () => {
+  let physics: SwingPhysics;
+  let shooter: WebShooter;
+
+  beforeEach(() => {
+    physics = new SwingPhysics();
+    physics.position.set(0, 20, 0);
+    physics.mode = MovementMode.AIR;
+    shooter = new WebShooter(physics);
+  });
+
+  it('second shot mid-swing replaces the anchor and keeps swinging', () => {
+    const first = new THREE.Vector3(30, 40, 0);
+    expect(shooter.shootWeb(first, physics.position)).toBe(true);
+    expect(physics.mode).toBe(MovementMode.SWINGING);
+
+    const second = new THREE.Vector3(-20, 35, 0);
+    expect(shooter.shootWeb(second, physics.position)).toBe(true);
+    expect(physics.mode).toBe(MovementMode.SWINGING);
+    expect(shooter.isWebActive).toBe(true);
+    expect(physics.webAnchor!.x).toBeCloseTo(-20, 5);
+    expect(physics.webAnchor!.y).toBeCloseTo(35, 5);
+  });
+
+  it('rejects anchors at/below feet so the line always has height', () => {
+    const low = new THREE.Vector3(10, 19, 0);
+    expect(shooter.shootWeb(low, physics.position)).toBe(false);
+    expect(physics.mode).toBe(MovementMode.AIR);
+    expect(shooter.isWebActive).toBe(false);
+  });
+});

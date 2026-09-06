@@ -164,6 +164,14 @@ export class WebShooter {
     if (!this.isWebActive) return;
 
     this.physics.releaseWeb(jumpBoost, lookDir);
+    this.notifyReleased();
+  }
+
+  /**
+   * Syncs renderer/sound state after the physics layer released the line
+   * on its own (sling-to-anchor, landing, slack timeout).
+   */
+  public notifyReleased(): void {
     this.isWebActive = false;
     this.ropeState = RopeState.HIDDEN;
     this.webRenderer.hide();
