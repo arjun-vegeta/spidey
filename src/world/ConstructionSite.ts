@@ -292,7 +292,7 @@ export class ConstructionSite {
   private buildSkyBridge(): void {
     const bridgeY = 15.0; // Level 3 slab height
     const bridgeStartX = -13.0; // West side of construction building
-    const bridgeEndX = -35.0; // Connects to adjacent building
+    const bridgeEndX = -41.0; // Meets the dock building face (notched stair hall)
     const bridgeLength = Math.abs(bridgeStartX - bridgeEndX);
     const bridgeWidth = 3.2;
     const bridgeThickness = 0.4;

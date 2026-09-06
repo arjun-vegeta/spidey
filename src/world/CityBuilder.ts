@@ -19,6 +19,18 @@ export interface SkyscraperConfig {
   setbackHeight?: number; // Height at which setback begins (if tiered)
   setbackScale?: number;  // Scale of setback section (e.g. 0.75)
   style?: 'modern' | 'artdeco' | 'industrial' | 'terrace';
+  // Six-building district extras
+  skybridgeDock?: boolean; // terrace railing + dock steps to the site skybridge
+  julietRows?: number; // rows of decorative juliet rails on the site-facing face
+  perchLedges?: boolean; // climbable all-face perch ledges every 8m (zip up + sit)
+  pergola?: boolean; // rooftop pergola beams over the terrace
+  manualRoof?: boolean; // skip default tank/HVAC (custom roof built instead)
+  smokestack?: boolean; // tall brick chimney (industrial landmark + height anchor)
+  mansard?: boolean; // stepped verdigris mansard cap + dormers (copper annex)
+  marquee?: boolean; // theater front: canopy, bulb row, blade sign
+  flyTower?: boolean; // theater stage-house tower (tall rear block)
+  ink?: number; // per-building facade pen-ink tint (notebook doodle palette)
+  trimInk?: number; // per-building darker trim ink
 }
 
 interface CloudData {
@@ -29,13 +41,16 @@ interface CloudData {
 }
 
 /**
- * Procedural Manhattan-style Skyscraper District surrounding the Construction Site.
- * Features:
- * - 20+ skyscrapers of diverse heights (35m to 130m) with setbacks and cornices
- * - Rooftop details: wooden water towers on 4-legged trestles, industrial HVAC chillers, radio antennae, parapets
- * - Connected adjacent building that docks directly to the construction sky bridge
- * - Street ground plane with cross-hatched tarmac, curbs, and perimeter barrier walls
- * - Drifting sketched puffy clouds and distant city skyline silhouette
+ * Eight-building ink district around the central Construction Site.
+ * Each landmark owns a pen-ink palette + a traversal personality:
+ * slate dockside terrace (skybridge dock), teal glass slab (balcony rows),
+ * sepia deco crown (walkable tiers), brick walkup (pergola terrace),
+ * moss waterworks (tank farm + smokestack), plum ledge tower (perch ledges),
+ * verdigris copper annex (mansard + dormers), charcoal noir theater
+ * (marquee bulbs, blade sign, fly tower).
+ * Street furniture: lamp posts, red hydrants, trash cans.
+ * - Rooftop details: wooden water towers, HVAC chillers, antennae, parapets
+ * - Street ground plane, drifting clouds, distant skyline silhouette
  * - Fast spatial raycasting with grapple-assist target magnet for web swinging
  * - Strictly typed, zero any, 60+ FPS optimized
  */
@@ -52,8 +67,14 @@ export class CityBuilder {
   private mapBuildingList: Array<{ x: number; z: number; w: number; d: number }> = [];
   private balconySpecs: Array<{ cx: number; cy: number; cz: number; hw: number; hd: number; nx: number; nz: number }> = [];
   private terraceHvacSpecs: Array<{ cx: number; cy: number; cz: number; w: number; h: number; d: number }> = [];
-  private glintMat: THREE.MeshBasicMaterial | null = null;
-  private glintGeom: THREE.OctahedronGeometry | null = null;
+  // Roof-prop shells: water-tank bodies + decks, chiller cabinets, smokestacks,
+  // lamp posts, hydrants and trash cans. Visuals are never colliders.
+  private tankSpecs: Array<{ cx: number; cy: number; cz: number; r: number; deckTop: number; bodyTop: number }> = [];
+  private roofHvacSpecs: Array<{ cx: number; cy: number; cz: number; w: number; h: number; d: number }> = [];
+  private stackSpecs: Array<{ cx: number; cz: number; baseY: number; topY: number; r: number }> = [];
+  private towerSpecs: Array<{ cx: number; cz: number; hw: number; hd: number; h: number }> = [];
+  private streetPropSpecs: Array<{ x: number; z: number; r: number; h: number }> = [];
+  private lampGlowMat: THREE.MeshBasicMaterial | null = null;
 
   // Shared ink materials
   private facadeMat: THREE.ShaderMaterial;
@@ -269,17 +290,19 @@ export class CityBuilder {
   }
 
   /**
-   * Generates the 20+ skyscrapers of varying heights with detailed rooftops
+   * Generates the eight ink-district landmarks with detailed rooftops
    */
   private buildSkyscrapers(): void {
     const buildingsGroup = new THREE.Group();
     buildingsGroup.name = 'Skyscrapers';
 
     // Skyscraper architectural specifications
+    // Six-building ink district: construction site at center, one landmark per side.
+    // Each building owns an ink palette + a traversal personality.
     const configs: SkyscraperConfig[] = [
-      // 1. Connected Adjacent Building (docks to construction site skybridge at x = -35m, y = 15m)
+      // W. Dockside Terrace — skybridge dock, slate blue-grey ink
       {
-        x: -48.0,
+        x: -54.0,
         z: 0.0,
         width: 26.0,
         depth: 24.0,
@@ -287,263 +310,123 @@ export class CityBuilder {
         hasWaterTower: true,
         hasHvac: true,
         hasAntenna: false,
-        style: 'terrace'
+        style: 'terrace',
+        skybridgeDock: true,
+        julietRows: 2,
+        ink: 0x2a3a6e,
+        trimInk: 0x141c42
       },
-      // 2. East-1: Mid-rise tower facing construction site
+      // E. Glass Slab — tall teal tower, balcony rows facing the site
       {
-        x: 58.0,
+        x: 52.0,
         z: 0.0,
-        width: 28.0,
+        width: 20.0,
         depth: 26.0,
-        height: 65.0,
+        height: 66.0,
         hasWaterTower: true,
         hasHvac: true,
         hasAntenna: false,
-        style: 'modern'
+        style: 'modern',
+        ink: 0x24606e,
+        trimInk: 0x12333b
       },
-      // 3. East-2: Art-Deco stepped skyscraper
-      {
-        x: 60.0,
-        z: 70.0,
-        width: 26.0,
-        depth: 26.0,
-        height: 95.0,
-        hasWaterTower: false,
-        hasHvac: true,
-        hasAntenna: true,
-        setbackHeight: 60.0,
-        setbackScale: 0.72,
-        style: 'artdeco'
-      },
-      // 4. East-3: Sleek office tower
-      {
-        x: 60.0,
-        z: -70.0,
-        width: 26.0,
-        depth: 26.0,
-        height: 78.0,
-        hasWaterTower: true,
-        hasHvac: true,
-        hasAntenna: true,
-        style: 'modern'
-      },
-      // 5. North-1: Tall setback high-rise
+      // N. Deco Crown — sepia art-deco tiers, walkable crown ring
       {
         x: 0.0,
-        z: 65.0,
-        width: 24.0,
-        depth: 24.0,
-        height: 85.0,
-        hasWaterTower: true,
-        hasHvac: true,
-        hasAntenna: true,
-        setbackHeight: 52.0,
-        setbackScale: 0.75,
-        style: 'artdeco'
-      },
-      // 6. North-2: Mid-rise commercial office
-      {
-        x: -55.0,
-        z: 65.0,
-        width: 22.0,
-        depth: 22.0,
-        height: 48.0,
-        hasWaterTower: true,
-        hasHvac: true,
-        hasAntenna: false,
-        style: 'industrial'
-      },
-      // 7. North-3: Supertall tower
-      {
-        x: 55.0,
-        z: 135.0,
-        width: 28.0,
-        depth: 26.0,
-        height: 110.0,
-        hasWaterTower: false,
-        hasHvac: true,
-        hasAntenna: true,
-        setbackHeight: 75.0,
-        setbackScale: 0.7,
-        style: 'artdeco'
-      },
-      // 8. North-4: Towering Art-Deco Landmark (125m)
-      {
-        x: -15.0,
-        z: 140.0,
-        width: 32.0,
-        depth: 30.0,
-        height: 125.0,
-        hasWaterTower: false,
-        hasHvac: true,
-        hasAntenna: true,
-        setbackHeight: 80.0,
-        setbackScale: 0.60,
-        style: 'artdeco'
-      },
-      // 9. North-5: Residential high-rise
-      {
-        x: -75.0,
-        z: 135.0,
+        z: 68.0,
         width: 26.0,
-        depth: 24.0,
-        height: 72.0,
-        hasWaterTower: true,
-        hasHvac: true,
-        hasAntenna: false,
-        style: 'modern'
-      },
-      // 10. South-1: Corporate headquarters
-      {
-        x: 0.0,
-        z: -65.0,
-        width: 25.0,
-        depth: 25.0,
-        height: 74.0,
-        hasWaterTower: true,
-        hasHvac: true,
-        hasAntenna: true,
-        style: 'modern'
-      },
-      // 11. South-2: Mid-rise brick style
-      {
-        x: -55.0,
-        z: -65.0,
-        width: 22.0,
-        depth: 22.0,
-        height: 42.0,
-        hasWaterTower: true,
-        hasHvac: true,
-        hasAntenna: false,
-        style: 'industrial'
-      },
-      // 12. South-3: Setback skyscraper
-      {
-        x: 55.0,
-        z: -135.0,
-        width: 26.0,
-        depth: 26.0,
-        height: 105.0,
-        hasWaterTower: false,
-        hasHvac: true,
-        hasAntenna: true,
-        setbackHeight: 70.0,
-        setbackScale: 0.72,
-        style: 'artdeco'
-      },
-      // 13. South-4: Supertall Empire Monolith (130m!)
-      {
-        x: -15.0,
-        z: -140.0,
-        width: 32.0,
-        depth: 30.0,
-        height: 130.0,
-        hasWaterTower: false,
-        hasHvac: true,
-        hasAntenna: true,
-        setbackHeight: 85.0,
-        setbackScale: 0.58,
-        style: 'artdeco'
-      },
-      // 14. South-5: High-rise apartment tower
-      {
-        x: -75.0,
-        z: -135.0,
-        width: 24.0,
-        depth: 24.0,
-        height: 68.0,
-        hasWaterTower: true,
-        hasHvac: true,
-        hasAntenna: false,
-        style: 'modern'
-      },
-      // 15. West-1: Modern skyscraper flanking the avenue
-      {
-        x: -110.0,
-        z: 0.0,
-        width: 28.0,
         depth: 26.0,
         height: 88.0,
         hasWaterTower: false,
         hasHvac: true,
         hasAntenna: true,
-        style: 'modern'
+        setbackHeight: 56.0,
+        setbackScale: 0.72,
+        style: 'artdeco',
+        ink: 0x6b4a2a,
+        trimInk: 0x3d2a16
       },
-      // 16. West-2: Stepped office tower
+      // S. Brick Walkup — low red-brick terrace house, pergola roof
       {
-        x: -110.0,
-        z: 70.0,
-        width: 28.0,
-        depth: 26.0,
-        height: 92.0,
-        hasWaterTower: true,
-        hasHvac: true,
-        hasAntenna: false,
-        setbackHeight: 62.0,
-        setbackScale: 0.75,
-        style: 'artdeco'
-      },
-      // 17. West-3: Brick commercial mid-rise
-      {
-        x: -110.0,
-        z: -70.0,
+        x: 0.0,
+        z: 42.0,
         width: 24.0,
-        depth: 24.0,
-        height: 58.0,
+        depth: 16.0,
+        height: 15.0,
         hasWaterTower: true,
         hasHvac: true,
         hasAntenna: false,
-        style: 'industrial'
+        style: 'terrace',
+        julietRows: 2,
+        pergola: true,
+        ink: 0x7a3b2e,
+        trimInk: 0x46211a
       },
-      // 18. Far-East-1: Outer avenue skyscraper
+      // NW. Waterworks — moss-green industrial block, tank farm + smokestack
       {
-        x: 130.0,
-        z: 25.0,
-        width: 34.0,
-        depth: 32.0,
-        height: 118.0,
-        hasWaterTower: false,
-        hasHvac: true,
-        hasAntenna: true,
-        setbackHeight: 78.0,
-        setbackScale: 0.60,
-        style: 'artdeco'
-      },
-      // 19. Far-East-2: Outer avenue mid-tall
-      {
-        x: 130.0,
-        z: -65.0,
+        x: -46.0,
+        z: -44.0,
         width: 28.0,
-        depth: 28.0,
-        height: 84.0,
-        hasWaterTower: true,
-        hasHvac: true,
-        hasAntenna: false,
-        style: 'modern'
-      },
-      // 20. Far-West-1: Corporate monolith
-      {
-        x: -170.0,
-        z: 35.0,
-        width: 30.0,
-        depth: 30.0,
-        height: 102.0,
+        depth: 22.0,
+        height: 13.0,
         hasWaterTower: false,
-        hasHvac: true,
-        hasAntenna: true,
-        style: 'modern'
+        hasHvac: false,
+        hasAntenna: false,
+        style: 'industrial',
+        manualRoof: true,
+        smokestack: true,
+        ink: 0x3f5a3a,
+        trimInk: 0x22341f
       },
-      // 21. Far-West-2: Secondary avenue tower
+      // SE. Ledge Tower — plum perch-ledge tower, zip up and sit
       {
-        x: -170.0,
-        z: -45.0,
-        width: 26.0,
-        depth: 26.0,
-        height: 76.0,
+        x: 46.0,
+        z: 46.0,
+        width: 18.0,
+        depth: 18.0,
+        height: 44.0,
         hasWaterTower: true,
         hasHvac: true,
         hasAntenna: false,
-        style: 'modern'
+        style: 'modern',
+        perchLedges: true,
+        ink: 0x5a2f5a,
+        trimInk: 0x331a33
+      },
+      // NE. Copper Annex — verdigris mansard cap, dormers, juliet rows
+      {
+        x: 48.0,
+        z: -48.0,
+        width: 22.0,
+        depth: 22.0,
+        height: 34.0,
+        hasWaterTower: true,
+        hasHvac: true,
+        hasAntenna: false,
+        setbackHeight: 24.0,
+        setbackScale: 0.72,
+        style: 'modern',
+        julietRows: 2,
+        mansard: true,
+        ink: 0x3d6e5f,
+        trimInk: 0x234038
+      },
+      // SW. Noir Theater — charcoal stage house, marquee bulbs, fly tower
+      {
+        x: -48.0,
+        z: 48.0,
+        width: 30.0,
+        depth: 20.0,
+        height: 20.0,
+        hasWaterTower: false,
+        hasHvac: false,
+        hasAntenna: false,
+        style: 'industrial',
+        julietRows: 2,
+        marquee: true,
+        flyTower: true,
+        ink: 0x33363f,
+        trimInk: 0x14161c
       }
     ];
 
@@ -553,12 +436,15 @@ export class CityBuilder {
     }
 
     this.group.add(buildingsGroup);
+    this.buildLampPosts();
+    this.buildStreetProps();
     this.buildCollisionShells(configs);
   }
 
   /**
    * Simplified collision shells: a few big boxes per building, never the visual meshes.
    * Walls block, floors stand. Street + construction slabs included.
+   * Parapets read as rails (block walk-offs, jump to vault), roof props are solid.
    */
   private buildCollisionShells(configs: SkyscraperConfig[]): void {
     const coll = new WorldCollider();
@@ -566,24 +452,101 @@ export class CityBuilder {
     // Street slab top at y=0.5 across the playable area
     coll.addBoxCoords(-260, -2, -260, 260, 0.5, 260, 'floor');
 
+    // Parapet ring: 1.2m rails around a roof rect so edges block like rails.
+    // gapEast leaves the skybridge dock entry open (matches the visual rail gap).
+    const parapetRing = (cx: number, cz: number, w: number, d: number, topY: number, gapEast: boolean = false): void => {
+      const t = 0.35;
+      const h = 1.2;
+      coll.addBoxCoords(cx - w / 2, topY, cz + d / 2 - t, cx + w / 2, topY + h, cz + d / 2, 'wall');
+      coll.addBoxCoords(cx - w / 2, topY, cz - d / 2, cx + w / 2, topY + h, cz - d / 2 + t, 'wall');
+      if (gapEast) {
+        coll.addBoxCoords(cx + w / 2 - t, topY, cz - d / 2, cx + w / 2, topY + h, cz - 2.0, 'wall');
+        coll.addBoxCoords(cx + w / 2 - t, topY, cz + 2.0, cx + w / 2, topY + h, cz + d / 2, 'wall');
+      } else {
+        coll.addBoxCoords(cx + w / 2 - t, topY, cz - d / 2, cx + w / 2, topY + h, cz + d / 2, 'wall');
+      }
+      coll.addBoxCoords(cx - w / 2, topY, cz - d / 2, cx - w / 2 + t, topY + h, cz + d / 2, 'wall');
+    };
+
     for (const c of configs) {
       const hw = c.width / 2;
       const hd = c.depth / 2;
       const tiered = c.setbackHeight !== undefined && c.setbackScale !== undefined && c.setbackHeight < c.height;
+      let roofW = c.width;
+      let roofD = c.depth;
       if (tiered) {
         const sh = c.setbackHeight as number;
         const rw = (c.width * (c.setbackScale as number)) / 2;
         const rd = (c.depth * (c.setbackScale as number)) / 2;
+        roofW = rw * 2;
+        roofD = rd * 2;
         // Lower tier walls + walkable terrace ring on its roof
         coll.addBoxCoords(c.x - hw, 0, c.z - hd, c.x + hw, sh, c.z + hd, 'wall');
         coll.addBoxCoords(c.x - hw, sh - 0.2, c.z - hd, c.x + hw, sh, c.z + hd, 'floor');
+        parapetRing(c.x, c.z, c.width, c.depth, sh);
         // Upper tier walls + roof
         coll.addBoxCoords(c.x - rw, sh, c.z - rd, c.x + rw, c.height, c.z + rd, 'wall');
         coll.addBoxCoords(c.x - rw, c.height - 0.2, c.z - rd, c.x + rw, c.height, c.z + rd, 'floor');
+      } else if (c.skybridgeDock) {
+        // Entry-notch massing: main block + two stair-hall cheeks.
+        // The notch (x -45..-41, z +/-2) stays open for the dock steps.
+        const notchBack = c.x + hw - 4;
+        const faceX = c.x + hw;
+        coll.addBoxCoords(c.x - hw, 0, c.z - hd, notchBack, c.height, c.z + hd, 'wall');
+        coll.addBoxCoords(c.x - hw, c.height - 0.2, c.z - hd, notchBack, c.height, c.z + hd, 'floor');
+        coll.addBoxCoords(notchBack, 0, c.z + 2, faceX, c.height, c.z + hd, 'wall');
+        coll.addBoxCoords(notchBack, c.height - 0.2, c.z + 2, faceX, c.height, c.z + hd, 'floor');
+        coll.addBoxCoords(notchBack, 0, c.z - hd, faceX, c.height, c.z - 2, 'wall');
+        coll.addBoxCoords(notchBack, c.height - 0.2, c.z - hd, faceX, c.height, c.z - 2, 'floor');
       } else {
         coll.addBoxCoords(c.x - hw, 0, c.z - hd, c.x + hw, c.height, c.z + hd, 'wall');
         coll.addBoxCoords(c.x - hw, c.height - 0.2, c.z - hd, c.x + hw, c.height, c.z + hd, 'floor');
       }
+      parapetRing(c.x, c.z, roofW, roofD, c.height, !!c.skybridgeDock);
+
+      // Rooftop access penthouse block (skipped when a fly tower owns the roof)
+      if (!c.flyTower) {
+        const phx = c.x - (roofW * 0.5) * 0.4;
+        const phz = c.z - (roofD * 0.5) * 0.4;
+        coll.addBoxCoords(phx - 2.25, c.height, phz - 1.75, phx + 2.25, c.height + 3.0, phz + 1.75, 'wall');
+      }
+
+      // Antenna + industrial mast pedestals (poles stay visual-only)
+      if (c.hasAntenna) {
+        coll.addBoxCoords(c.x - 1, c.height, c.z - 1, c.x + 1, c.height + 1.0, c.z + 1, 'wall');
+      }
+      if (c.style === 'industrial') {
+        coll.addBoxCoords(c.x - 0.7, c.height, c.z - 0.7, c.x + 0.7, c.height + 0.6, c.z + 0.7, 'wall');
+      }
+    }
+
+    // Water-tank barrels (solid) + walkable decks + standable caps
+    for (const t of this.tankSpecs) {
+      coll.addBoxCoords(t.cx - t.r, t.deckTop, t.cz - t.r, t.cx + t.r, t.bodyTop, t.cz + t.r, 'wall');
+      coll.addBoxCoords(t.cx - 2, t.deckTop - 0.25, t.cz - 2, t.cx + 2, t.deckTop, t.cz + 2, 'floor');
+      coll.addBoxCoords(t.cx - t.r, t.bodyTop - 0.2, t.cz - t.r, t.cx + t.r, t.bodyTop, t.cz + t.r, 'floor');
+    }
+
+    // Rooftop chiller cabinets (block + standable tops)
+    for (const h of this.roofHvacSpecs) {
+      coll.addBoxCoords(h.cx - h.w * 0.5, h.cy, h.cz - h.d * 0.5, h.cx + h.w * 0.5, h.cy + h.h, h.cz + h.d * 0.5, 'wall');
+      coll.addBoxCoords(h.cx - h.w * 0.5, h.cy + h.h - 0.2, h.cz - h.d * 0.5, h.cx + h.w * 0.5, h.cy + h.h, h.cz + h.d * 0.5, 'floor');
+    }
+
+    // Smokestacks (solid brick)
+    for (const s of this.stackSpecs) {
+      coll.addBoxCoords(s.cx - s.r, s.baseY, s.cz - s.r, s.cx + s.r, s.topY, s.cz + s.r, 'wall');
+    }
+
+    // Theater fly towers (solid stage houses + standable tops)
+    for (const t of this.towerSpecs) {
+      coll.addBoxCoords(t.cx - t.hw, 0, t.cz - t.hd, t.cx + t.hw, t.h, t.cz + t.hd, 'wall');
+      coll.addBoxCoords(t.cx - t.hw, t.h - 0.2, t.cz - t.hd, t.cx + t.hw, t.h, t.cz + t.hd, 'floor');
+    }
+
+    // Lamp posts, hydrants, trash cans (ankle-to-chest blockers)
+    for (const p of this.streetPropSpecs) {
+      coll.addBoxCoords(p.x - p.r, 0.5, p.z - p.r, p.x + p.r, 0.5 + p.h, p.z + p.r, 'wall');
     }
 
     // Construction site floor slabs (match ConstructionSite slab tops, with stair cutout)
@@ -678,21 +641,23 @@ export class CityBuilder {
       coll.addBoxCoords(cx - hs, cy + cs - 0.2, cz - hs, cx + hs, cy + cs, cz + hs, 'floor');
     }
 
-    // Skybridge deck floor shell (-35 to -13 at y=15.0..15.4)
-    coll.addBoxCoords(-35, 15.0, -1.6, -13, 15.4, 1.6, 'floor');
+    // Skybridge deck floor shell (-41 to -13 at y=15.0..15.4)
+    coll.addBoxCoords(-41, 15.0, -1.6, -13, 15.4, 1.6, 'floor');
     // Skybridge side railings (North & South)
-    coll.addBoxCoords(-35, 15.4, -1.65, -13, 16.6, -1.45, 'wall');
-    coll.addBoxCoords(-35, 15.4, 1.45, -13, 16.6, 1.65, 'wall');
+    coll.addBoxCoords(-41, 15.4, -1.65, -13, 16.6, -1.45, 'wall');
+    coll.addBoxCoords(-41, 15.4, 1.45, -13, 16.6, 1.65, 'wall');
 
     // Construction site Floor 3 West railings (north and south of bridge opening)
     coll.addBoxCoords(-13.1, 15.5, 1.6, -12.8, 16.6, 10.0, 'wall');
     coll.addBoxCoords(-13.1, 15.5, -10.0, -12.8, 16.6, -1.6, 'wall');
 
-    // Connected Adjacent Building (B1) skybridge dock steps:
-    // Connects skybridge deck (15.4) to B1 terrace roof (18.0) without jumping
-    coll.addBoxCoords(-37, 15.8, -1.8, -35, 16.25, 1.8, 'floor');
-    coll.addBoxCoords(-39, 16.6, -1.8, -37, 17.1, 1.8, 'floor');
-    coll.addBoxCoords(-41, 17.5, -1.8, -39, 18.0, 1.8, 'floor');
+    // Skybridge dock steps: 5 walkable 0.5m rises inside the entry notch
+    // (world x -45.4..-41.0 at z +/-1.8). Step k center: -41.4 - 0.8k.
+    for (let k = 0; k < 5; k++) {
+      const top = 15.9 + k * 0.5;
+      const xc = -41.4 - k * 0.8;
+      coll.addBoxCoords(xc - 0.4, top - 0.2, -1.8, xc + 0.4, top, 1.8, 'floor');
+    }
 
     // Stepping stones mid-air near spawn (0, 4, 18)
     for (const s of this.constructionSite.getSteppingStoneBounds()) {
@@ -770,6 +735,16 @@ export class CityBuilder {
 
     const { width, depth, height, setbackHeight, setbackScale } = config;
 
+    // Per-building pen-ink palette: same doodle vibe, different ink per landmark.
+    const facade = config.ink !== undefined
+      ? InkShaderMaterial.create({ inkColor: new THREE.Color(config.ink) })
+      : this.facadeMat;
+    const trim = config.trimInk !== undefined
+      ? InkShaderMaterial.create({ inkColor: new THREE.Color(config.trimInk) })
+      : this.trimMat;
+    if (facade !== this.facadeMat) this.materials.push(facade);
+    if (trim !== this.trimMat) this.materials.push(trim);
+
     const roofY = height;
     let roofW = width;
     let roofD = depth;
@@ -779,12 +754,12 @@ export class CityBuilder {
       // 1. Lower base section
       const baseH = setbackHeight;
       const baseGeom = new THREE.BoxGeometry(width, baseH, depth);
-      const baseMesh = this.addMeshWithEdges(bGroup, baseGeom, this.facadeMat, InkShaderMaterial.defaultInkColor, true);
+      const baseMesh = this.addMeshWithEdges(bGroup, baseGeom, facade, InkShaderMaterial.defaultInkColor, true);
       baseMesh.position.set(0, baseH * 0.5, 0);
 
       // Base cornice trim
       const corniceGeom = new THREE.BoxGeometry(width + 0.6, 0.6, depth + 0.6);
-      const cornice = this.addMeshWithEdges(bGroup, corniceGeom, this.trimMat, InkShaderMaterial.defaultInkColor, false);
+      const cornice = this.addMeshWithEdges(bGroup, corniceGeom, trim, InkShaderMaterial.defaultInkColor, false);
       cornice.position.set(0, baseH + 0.3, 0);
 
       // Lower setback ledge grapple points
@@ -801,7 +776,6 @@ export class CityBuilder {
           const ox = sx * (width * 0.5);
           const oz = sz * (depth * 0.5);
           this.webAnchors.push(new THREE.Vector3(config.x + ox, baseH + 1.2, config.z + oz));
-          this.addLatchGlint(bGroup, ox, baseH + 1.2, oz);
         }
       }
 
@@ -835,12 +809,12 @@ export class CityBuilder {
       roofD = depth * setbackScale;
       const upperH = height - setbackHeight;
       const upperGeom = new THREE.BoxGeometry(roofW, upperH, roofD);
-      const upperMesh = this.addMeshWithEdges(bGroup, upperGeom, this.facadeMat, InkShaderMaterial.defaultInkColor, true);
+      const upperMesh = this.addMeshWithEdges(bGroup, upperGeom, facade, InkShaderMaterial.defaultInkColor, true);
       upperMesh.position.set(0, setbackHeight + upperH * 0.5, 0);
 
-      // Terrace props: on artdeco setback terraces wider than 6m (or B5), add 1-2 HVAC/vent boxes
+      // Terrace props on setback terraces with a walkway worth furnishing
       const terraceWalkwayW = (width - roofW) * 0.5;
-      if (terraceWalkwayW >= 6.0 || (config.width === 24 && config.height === 85)) {
+      if (terraceWalkwayW >= 6.0) {
         this.buildTerraceHvacProps(bGroup, config, baseH, roofW, roofD);
       }
 
@@ -849,17 +823,42 @@ export class CityBuilder {
         this.buildTieredBalconies(bGroup, config, baseH, upperH, roofW, roofD);
       }
     } else {
-      // Standard monolithic skyscraper
-      const bGeom = new THREE.BoxGeometry(width, height, depth);
-      const bMesh = this.addMeshWithEdges(bGroup, bGeom, this.facadeMat, InkShaderMaterial.defaultInkColor, true);
-      bMesh.position.set(0, height * 0.5, 0);
+      if (config.skybridgeDock) {
+        // Entry-notch massing: main block + two east-bay cheeks leave a 4m
+        // stair hall open to the skybridge. A hand-cut entry, not a flat wall.
+        const mainGeom = new THREE.BoxGeometry(width - 4, height, depth);
+        const mainMesh = this.addMeshWithEdges(bGroup, mainGeom, facade, InkShaderMaterial.defaultInkColor, true);
+        mainMesh.position.set(-2, height * 0.5, 0);
+
+        const cheekD = depth * 0.5 - 2;
+        const cheekGeom = new THREE.BoxGeometry(4, height, cheekD);
+        const cheekN = this.addMeshWithEdges(bGroup, cheekGeom, facade, InkShaderMaterial.defaultInkColor, true);
+        cheekN.position.set(width * 0.5 - 2, height * 0.5, 2 + cheekD * 0.5);
+        const cheekS = this.addMeshWithEdges(bGroup, cheekGeom, facade, InkShaderMaterial.defaultInkColor, true);
+        cheekS.position.set(width * 0.5 - 2, height * 0.5, -2 - cheekD * 0.5);
+
+        // Entry portal: ink posts + lintel gate over the stair-hall mouth
+        const postGeom = new THREE.BoxGeometry(0.35, 3.0, 0.35);
+        for (const s of [-1, 1]) {
+          const post = this.addMeshWithEdges(bGroup, postGeom, trim, InkShaderMaterial.defaultInkColor, false);
+          post.position.set(width * 0.5, 15.4 + 1.5, s * 2.3);
+        }
+        const lintelGeom = new THREE.BoxGeometry(0.4, 0.5, 5.4);
+        const lintel = this.addMeshWithEdges(bGroup, lintelGeom, trim, InkShaderMaterial.defaultInkColor, false);
+        lintel.position.set(width * 0.5, 18.5, 0);
+      } else {
+        // Standard monolithic skyscraper
+        const bGeom = new THREE.BoxGeometry(width, height, depth);
+        const bMesh = this.addMeshWithEdges(bGroup, bGeom, facade, InkShaderMaterial.defaultInkColor, true);
+        bMesh.position.set(0, height * 0.5, 0);
+      }
 
       // Architectural facade window band insets
       const numBands = Math.floor(height / 12);
       for (let b = 1; b < numBands; b++) {
         const bandY = b * 12;
         const bandGeom = new THREE.BoxGeometry(width + 0.3, 0.8, depth + 0.3);
-        const band = this.addMeshWithEdges(bGroup, bandGeom, this.trimMat, InkShaderMaterial.defaultInkColor, false);
+        const band = this.addMeshWithEdges(bGroup, bandGeom, trim, InkShaderMaterial.defaultInkColor, false);
         band.position.set(0, bandY, 0);
       }
 
@@ -894,30 +893,26 @@ export class CityBuilder {
         rWest.raycast = () => {};
         bGroup.add(rWest);
 
-        // Add 2 HVAC boxes for chest cover + step platforms on B1 terrace
+        // Add 2 HVAC boxes for chest cover + step platforms on terrace roofs
         this.buildTerraceHvacProps(bGroup, config, height, 14, 14);
       }
     }
 
-    // Additional mid-height face latches for outer perimeter coverage
-    if (config.x === 55 && config.z === 135) {
-      // B7 North-3 (east face latches)
-      for (const y of [35, 55]) {
-        this.webAnchors.push(new THREE.Vector3(config.x + width * 0.5, y, config.z));
-        this.addLatchGlint(bGroup, width * 0.5, y, 0);
+    // Mid-face latch pairs on the site-facing facade (swing-route coverage).
+    // Short houses get juliet rails instead (see below).
+    if (height >= 25) {
+      const face = this.faceTowardCenter(config);
+      for (const fy of [0.35, 0.6]) {
+        const y = Math.round(height * fy);
+        const lx = config.x + face.nx * (width * 0.5);
+        const lz = config.z + face.nz * (depth * 0.5);
+        this.webAnchors.push(new THREE.Vector3(lx, y, lz));
       }
-    } else if (config.x === 130 && config.z === 25) {
-      // B18 Far-East-1 (north face latches)
-      for (const y of [35, 60]) {
-        this.webAnchors.push(new THREE.Vector3(config.x, y, config.z + depth * 0.5));
-        this.addLatchGlint(bGroup, 0, y, depth * 0.5);
-      }
-    } else if (config.x === -75 && config.z === 135) {
-      // B9 North-5 (west face latches)
-      for (const y of [35, 55]) {
-        this.webAnchors.push(new THREE.Vector3(config.x - width * 0.5, y, config.z));
-        this.addLatchGlint(bGroup, -width * 0.5, y, 0);
-      }
+    }
+
+    // Juliet rails: decorative rail + latches for short houses, no standing shells
+    if (config.julietRows) {
+      this.buildJulietBalconies(bGroup, config, config.julietRows);
     }
 
     // Rooftop perimeter parapet wall (1.2m tall)
@@ -942,10 +937,12 @@ export class CityBuilder {
     const wParapet = this.addMeshWithEdges(bGroup, ewParapetGeom, this.roofMat, InkShaderMaterial.defaultInkColor, true);
     wParapet.position.set(-halfRW + parapetThick * 0.5, roofY + parapetHeight * 0.5, 0);
 
-    // Rooftop access penthouse / bulkhead
-    const phGeom = new THREE.BoxGeometry(4.5, 3.0, 3.5);
-    const ph = this.addMeshWithEdges(bGroup, phGeom, this.roofMat, InkShaderMaterial.defaultInkColor, true);
-    ph.position.set(-halfRW * 0.4, roofY + 1.5, -halfRD * 0.4);
+    // Rooftop access penthouse / bulkhead (skipped when a fly tower owns the roof)
+    if (!config.flyTower) {
+      const phGeom = new THREE.BoxGeometry(4.5, 3.0, 3.5);
+      const ph = this.addMeshWithEdges(bGroup, phGeom, this.roofMat, InkShaderMaterial.defaultInkColor, true);
+      ph.position.set(-halfRW * 0.4, roofY + 1.5, -halfRD * 0.4);
+    }
 
     // Curated web anchors at the 4 roof parapet corners
     this.webAnchors.push(
@@ -955,17 +952,37 @@ export class CityBuilder {
       new THREE.Vector3(config.x + halfRW, roofY + parapetHeight, config.z + halfRD)
     );
 
-    // Rooftop Features
+    // Parapet coping: pale stone cap line on every roof edge (no edge lines,
+    // the ink hatching carries small dressing to protect draw calls)
+    const copeT = 0.12;
+    const copeW = parapetThick + 0.24;
+    const copeY = roofY + parapetHeight + copeT * 0.5;
+    const copeNSGeom = new THREE.BoxGeometry(roofW, copeT, copeW);
+    for (const s of [-1, 1]) {
+      const cope = new THREE.Mesh(copeNSGeom, this.roofMat);
+      cope.position.set(0, copeY, s * (halfRD - parapetThick * 0.5));
+      cope.raycast = () => {};
+      bGroup.add(cope);
+    }
+    const copeEWGeom = new THREE.BoxGeometry(copeW, copeT, Math.max(0.1, roofD - parapetThick * 2));
+    for (const s of [-1, 1]) {
+      const cope = new THREE.Mesh(copeEWGeom, this.roofMat);
+      cope.position.set(s * (halfRW - parapetThick * 0.5), copeY, 0);
+      cope.raycast = () => {};
+      bGroup.add(cope);
+    }
+
+    // Rooftop Features (skipped for custom manual roofs)
     // 1. Classic NYC Wooden Water Tower on 4-legged trestle
-    if (config.hasWaterTower) {
+    if (config.hasWaterTower && !config.manualRoof) {
       this.buildWaterTower(bGroup, halfRW * 0.35, roofY, halfRD * 0.35, config.x, config.z);
     }
 
     // 2. Industrial Rooftop HVAC Box Chillers
-    if (config.hasHvac) {
-      this.buildHvacChiller(bGroup, halfRW * 0.2, roofY, -halfRD * 0.3);
+    if (config.hasHvac && !config.manualRoof) {
+      this.buildHvacChiller(bGroup, halfRW * 0.2, roofY, -halfRD * 0.3, config.x, config.z);
       if (roofW > 22) {
-        this.buildHvacChiller(bGroup, -halfRW * 0.3, roofY, halfRD * 0.2);
+        this.buildHvacChiller(bGroup, -halfRW * 0.3, roofY, halfRD * 0.2, config.x, config.z);
       }
     }
 
@@ -974,8 +991,8 @@ export class CityBuilder {
       this.buildAntennaSpire(bGroup, 0, roofY, 0, config.x, config.z);
     }
 
-    // 4. Special Sky Bridge landing on the Connected Adjacent Building
-    if (config.style === 'terrace') {
+    // 4. Skybridge dock railings + steps (dock building only)
+    if (config.skybridgeDock) {
       this.buildTerracePerimeterRailing(bGroup, roofW, roofD, roofY);
     }
 
@@ -985,7 +1002,206 @@ export class CityBuilder {
       this.buildBalconies(bGroup, config);
     }
 
+    // 6. District extras: perch ledges, pergola, smokestack, custom industrial roof
+    if (config.perchLedges) {
+      this.buildPerchLedges(bGroup, config);
+    }
+    if (config.pergola) {
+      this.buildPergola(bGroup, config, roofY, roofW, roofD);
+    }
+    if (config.smokestack) {
+      this.buildSmokestack(bGroup, config);
+    }
+    if (config.manualRoof) {
+      this.buildWaterworksRoof(bGroup, config);
+    }
+    if (config.marquee || config.flyTower) {
+      this.buildTheaterFront(bGroup, config, facade, trim);
+    }
+
+    // Per-style facade dressing: fins, windows, piers, cladding (visual only)    this.dressFacade(bGroup, config, trim);
+
     parent.add(bGroup);
+  }
+
+  /**
+   * Facade dressing per style — the detail pass that makes each landmark read
+   * differently at a glance. All dressing is non-collidable and edge-lineless
+   * (ink hatching carries it) to protect draw calls; proud boxes still catch
+   * bullets and webs as cover.
+   */
+  private dressFacade(parent: THREE.Group, config: SkyscraperConfig, trim: THREE.Material): void {
+    const { width, depth, height } = config;
+    const hw = width * 0.5;
+    const hd = depth * 0.5;
+    const flat = (geom: THREE.BufferGeometry, x: number, y: number, z: number): void => {
+      const m = new THREE.Mesh(geom, trim);
+      m.position.set(x, y, z);
+      m.raycast = () => {};
+      parent.add(m);
+    };
+
+    if (config.style === 'modern') {
+      // Glass tower: vertical mullion fins on all faces
+      for (let x = -hw + 1.5; x <= hw - 1.5; x += 3) {
+        for (const s of [-1, 1]) {
+          flat(new THREE.BoxGeometry(0.18, height, 0.3), x, height * 0.5, s * (hd + 0.1));
+        }
+      }
+      for (let z = -hd + 1.5; z <= hd - 1.5; z += 3) {
+        for (const s of [-1, 1]) {
+          flat(new THREE.BoxGeometry(0.3, height, 0.18), s * (hw + 0.1), height * 0.5, z);
+        }
+      }
+    } else if (config.style === 'terrace' && height <= 20) {
+      // Brick house: punched windows with sills + lintels on N/S faces
+      const rows: number[] = [];
+      for (let y = 4.5; y < height - 2; y += 4) rows.push(y);
+      const cols: number[] = [];
+      for (let x = -hw + 3; x <= hw - 3; x += 4.5) cols.push(x);
+      for (const y of rows) {
+        for (const s of [-1, 1]) {
+          const sill = new THREE.BoxGeometry(width - 2, 0.14, 0.16);
+          flat(sill, 0, y - 1.05, s * (hd + 0.05));
+          const lintel = new THREE.BoxGeometry(width - 2, 0.18, 0.16);
+          flat(lintel, 0, y + 1.05, s * (hd + 0.05));
+        }
+        for (const x of cols) {
+          for (const s of [-1, 1]) {
+            flat(new THREE.BoxGeometry(1.5, 1.9, 0.12), x, y, s * (hd + 0.05));
+          }
+        }
+      }
+    } else if (config.style === 'artdeco') {
+      // Deco piers up the base tier + stepped ziggurat crown cap with peak latch
+      const baseH = config.setbackHeight ?? height;
+      for (let x = -hw + 2; x <= hw - 2; x += 4) {
+        for (const s of [-1, 1]) {
+          flat(new THREE.BoxGeometry(0.5, baseH, 0.4), x, baseH * 0.5, s * (hd + 0.15));
+        }
+      }
+      let capW = width * (config.setbackScale ?? 1) * 0.6;
+      let capY = height;
+      for (let s = 0; s < 3; s++) {
+        flat(new THREE.BoxGeometry(capW, 0.9, capW * (depth / width)), 0, capY + 0.45, 0);
+        capY += 0.9;
+        capW *= 0.72;
+      }
+      this.webAnchors.push(new THREE.Vector3(config.x, capY + 0.6, config.z));
+    } else if (config.style === 'industrial') {
+      // Corrugated cladding bands + loading door + vents
+      for (let y = 2; y < height; y += 2) {
+        flat(new THREE.BoxGeometry(width + 0.3, 0.22, depth + 0.3), 0, y, 0);
+      }
+      const door = new THREE.BoxGeometry(4.5, 5.0, 0.2);
+      flat(door, 0, 2.5, hd + 0.08);
+      const doorFrame = new THREE.BoxGeometry(5.1, 0.3, 0.24);
+      flat(doorFrame, 0, 5.1, hd + 0.08);
+      for (const s of [-1, 1]) {
+        flat(new THREE.BoxGeometry(1.6, 1.0, 0.14), s * 6, 8.5, hd + 0.06);
+      }
+    }
+
+    // Verdigris mansard cap + dormers (copper annex): stepped slabs shrinking
+    // to a peak latch, dormer boxes winking out of the slope faces.
+    if (config.mansard) {
+      const tieredCap = config.setbackHeight !== undefined && config.setbackScale !== undefined;
+      const capBase = tieredCap ? width * (config.setbackScale as number) : width;
+      let capW = capBase * 0.9;
+      let capY = height;
+      for (let s = 0; s < 3; s++) {
+        flat(new THREE.BoxGeometry(capW, 1.1, capW * (depth / width)), 0, capY + 0.55, 0);
+        if (s === 0) {
+          for (const dx of [-capW * 0.25, capW * 0.25]) {
+            for (const dz of [-1, 1]) {
+              flat(new THREE.BoxGeometry(1.4, 1.3, 0.7), dx, capY + 0.9, dz * (capW * (depth / width) * 0.5));
+            }
+          }
+        }
+        capY += 1.1;
+        capW *= 0.74;
+      }
+      this.webAnchors.push(new THREE.Vector3(config.x, capY + 0.6, config.z));
+    }
+  }
+
+  /**
+   * Noir theater front: projecting marquee canopy with warm bulb row, tie rods,
+   * vertical blade sign with accent stripes, and the rear fly tower. The canopy
+   * floats above head height — walk under it, swing off the blade.
+   */
+  private buildTheaterFront(
+    parent: THREE.Group,
+    config: SkyscraperConfig,
+    facade: THREE.Material,
+    trim: THREE.Material
+  ): void {
+    const hw = config.width * 0.5;
+
+    // Fly tower: tall stage-house block at the rear, capped + louvered
+    const flyGeom = new THREE.BoxGeometry(8, 28, 8);
+    const fly = this.addMeshWithEdges(parent, flyGeom, facade, InkShaderMaterial.defaultInkColor, true);
+    fly.position.set(-6, 14, 0);
+    const flyCapGeom = new THREE.BoxGeometry(9, 0.8, 9);
+    const flyCap = this.addMeshWithEdges(parent, flyCapGeom, trim, InkShaderMaterial.defaultInkColor, false);
+    flyCap.position.set(-6, 28.4, 0);
+    const flyLouverGeom = new THREE.BoxGeometry(3.0, 2.0, 0.16);
+    const flyLouver = this.addMeshWithEdges(parent, flyLouverGeom, trim, InkShaderMaterial.defaultInkColor, false);
+    flyLouver.position.set(-6, 24, 4.05);
+    const flyCx = config.x - 6;
+    this.webAnchors.push(new THREE.Vector3(flyCx, 29.4, config.z));
+    this.towerSpecs.push({ cx: flyCx, cz: config.z, hw: 4, hd: 4, h: 28 });
+
+    // A pair of chillers kept clear of the fly tower
+    this.buildHvacChiller(parent, 8, config.height, -4, config.x, config.z);
+    this.buildHvacChiller(parent, 8, config.height, 4, config.x, config.z);
+
+    // Marquee canopy projecting toward the site + fascia + warm bulbs
+    const canopyGeom = new THREE.BoxGeometry(3.2, 0.5, 10);
+    const canopy = this.addMeshWithEdges(parent, canopyGeom, trim, InkShaderMaterial.defaultInkColor, false);
+    canopy.position.set(hw + 1.6, 5.0, 0);
+    const fasciaGeom = new THREE.BoxGeometry(0.24, 1.0, 10);
+    const fascia = this.addMeshWithEdges(parent, fasciaGeom, this.accentMat, InkShaderMaterial.defaultAccentColor, false);
+    fascia.position.set(hw + 3.1, 4.6, 0);
+    if (!this.lampGlowMat) {
+      this.lampGlowMat = new THREE.MeshBasicMaterial({ color: 0xe8a33d, toneMapped: false });
+    }
+    const bulbGeom = new THREE.SphereGeometry(0.09, 6, 6);
+    for (let b = -4; b <= 4; b++) {
+      const bulb = new THREE.Mesh(bulbGeom, this.lampGlowMat);
+      bulb.position.set(hw + 3.1, 4.0, b * 1.1);
+      bulb.raycast = () => {};
+      parent.add(bulb);
+    }
+    // Tie rods from facade to canopy lip
+    const rodGeom = new THREE.CylinderGeometry(0.035, 0.035, 3.4, 6);
+    for (const s of [-1, 1]) {
+      const rod = this.addMeshWithEdges(parent, rodGeom, this.metalMat, InkShaderMaterial.defaultInkColor, false);
+      rod.position.set(hw + 1.6, 6.6, s * 4.2);
+      rod.rotation.z = 1.05;
+    }
+
+    // Vertical blade sign at the corner + accent stripes
+    const bladeGeom = new THREE.BoxGeometry(0.5, 12, 2.0);
+    const blade = this.addMeshWithEdges(parent, bladeGeom, trim, InkShaderMaterial.defaultInkColor, false);
+    blade.position.set(hw + 0.6, 10, 7);
+    for (const sy of [7, 10, 13]) {
+      const stripe = new THREE.Mesh(new THREE.BoxGeometry(0.56, 0.5, 2.06), this.accentMat);
+      stripe.position.set(hw + 0.6, sy, 7);
+      stripe.raycast = () => {};
+      parent.add(stripe);
+    }
+    this.webAnchors.push(new THREE.Vector3(config.x + hw + 0.6, 16.6, config.z + 7));
+    this.webAnchors.push(new THREE.Vector3(config.x + hw + 3.1, 5.6, config.z - 4));
+    this.webAnchors.push(new THREE.Vector3(config.x + hw + 3.1, 5.6, config.z + 4));
+  }
+
+  /** Dominant-axis unit vector from a building toward the map center. */
+  private faceTowardCenter(config: SkyscraperConfig): { nx: number; nz: number } {
+    if (Math.abs(config.x) >= Math.abs(config.z)) {
+      return { nx: config.x > 0 ? -1 : 1, nz: 0 };
+    }
+    return { nx: 0, nz: config.z > 0 ? -1 : 1 };
   }
 
   /**
@@ -995,14 +1211,7 @@ export class CityBuilder {
    */
   private buildBalconies(parent: THREE.Group, config: SkyscraperConfig): void {
     // Face toward the map center on the dominant axis
-    let nx = 0;
-    let nz = 0;
-    if (Math.abs(config.x) >= Math.abs(config.z)) {
-      nx = config.x > 0 ? -1 : 1;
-    } else {
-      nz = config.z > 0 ? -1 : 1;
-    }
-    if (nx === 0 && nz === 0) nz = -1;
+    const { nx, nz } = this.faceTowardCenter(config);
 
     const hw = config.width / 2;
     const hd = config.depth / 2;
@@ -1068,7 +1277,6 @@ export class CityBuilder {
         const lz = config.z + cz + tz2 * s * (alongW / 2) + nz * (outD / 2);
         const anchor = new THREE.Vector3(lx, y + 1.3, lz);
         this.webAnchors.push(anchor);
-        this.addLatchGlint(parent, lx - config.x, y + 1.3, lz - config.z);
       }
 
       // Collision shells: standable floor + leanable outer rail
@@ -1081,17 +1289,6 @@ export class CityBuilder {
     }
   }
 
-  /** Small red ink diamond marking a curated latch point. Never raycastable. */
-  private addLatchGlint(parent: THREE.Group, lx: number, ly: number, lz: number): void {
-    if (!this.glintMat) {
-      this.glintMat = new THREE.MeshBasicMaterial({ color: 0xd63031, toneMapped: false });
-      this.glintGeom = new THREE.OctahedronGeometry(0.22);
-    }
-    const glint = new THREE.Mesh(this.glintGeom as THREE.BufferGeometry, this.glintMat);
-    glint.position.set(lx, ly, lz);
-    glint.raycast = () => {};
-    parent.add(glint);
-  }
 
   /**
    * Builds an authentic NYC cedar water tower on a 4-legged steel/timber trestle frame
@@ -1165,13 +1362,22 @@ export class CityBuilder {
     // Water-tower deck ring latch anchor + ink glint
     const deckWorldY = roofY + standHeight + 0.3;
     this.webAnchors.push(new THREE.Vector3(worldX + localX, deckWorldY, worldZ + localZ));
-    this.addLatchGlint(parent, localX, deckWorldY - roofY, localZ);
+
+    // Collision spec: walkable deck ring + solid barrel + standable cap
+    this.tankSpecs.push({
+      cx: worldX + localX,
+      cy: roofY,
+      cz: worldZ + localZ,
+      r: tankRadius,
+      deckTop: roofY + standHeight + 0.25,
+      bodyTop: roofY + standHeight + 0.25 + tankHeight,
+    });
   }
 
   /**
    * Builds an industrial rooftop HVAC box chiller unit
    */
-  private buildHvacChiller(parent: THREE.Group, localX: number, roofY: number, localZ: number): void {
+  private buildHvacChiller(parent: THREE.Group, localX: number, roofY: number, localZ: number, worldX: number, worldZ: number): void {
     const hvacGroup = new THREE.Group();
     hvacGroup.name = 'HvacChiller';
     hvacGroup.position.set(localX, roofY, localZ);
@@ -1202,6 +1408,16 @@ export class CityBuilder {
     l1.position.set(0, cabHeight * 0.5, cabDepth * 0.5 + 0.04);
 
     parent.add(hvacGroup);
+
+    // Collision spec: solid cabinet block + standable top
+    this.roofHvacSpecs.push({
+      cx: worldX + localX,
+      cy: roofY,
+      cz: worldZ + localZ,
+      w: cabWidth,
+      h: cabHeight,
+      d: cabDepth,
+    });
   }
 
   /**
@@ -1286,36 +1502,34 @@ export class CityBuilder {
     const eRail2 = this.addMeshWithEdges(parent, eRailGeom, this.metalMat, InkShaderMaterial.defaultInkColor, false);
     eRail2.position.set(halfW - 0.1, roofY + railHeight, -halfD + eRailHalfL * 0.5);
 
-    // Connected Adjacent Building (B1) skybridge dock steps:
-    // Connects skybridge deck (15.4) to B1 terrace roof (18.0) without jumping
+    // Dock stair hall (human scale): 5 walkable 0.5m rises from the bridge
+    // deck (15.4) to the terrace (18.0) inside the entry notch. Local coords:
+    // step k center localX = 12.6 - 0.8k (world -41.4 - 0.8k), top = 15.9 + 0.5k.
     const stepMat = this.roofMat;
-    const s1Geom = new THREE.BoxGeometry(2.0, 0.45, 3.6);
-    const s1 = this.addMeshWithEdges(parent, s1Geom, stepMat, InkShaderMaterial.defaultInkColor, true);
-    s1.position.set(12.0, 16.025, 0);
-
-    const s2Geom = new THREE.BoxGeometry(2.0, 0.5, 3.6);
-    const s2 = this.addMeshWithEdges(parent, s2Geom, stepMat, InkShaderMaterial.defaultInkColor, true);
-    s2.position.set(10.0, 16.85, 0);
-
-    const s3Geom = new THREE.BoxGeometry(2.0, 0.5, 3.6);
-    const s3 = this.addMeshWithEdges(parent, s3Geom, stepMat, InkShaderMaterial.defaultInkColor, true);
-    s3.position.set(8.0, 17.75, 0);
+    for (let k = 0; k < 5; k++) {
+      const top = 15.9 + k * 0.5;
+      const localXc = 12.6 - k * 0.8;
+      const stepGeom = new THREE.BoxGeometry(0.8, 0.5, 3.6);
+      const step = this.addMeshWithEdges(parent, stepGeom, stepMat, InkShaderMaterial.defaultInkColor, true);
+      step.position.set(localXc, top - 0.25, 0);
+    }
 
     // Landable trim on the front edge of each step
     const stepTrimGeom = new THREE.BoxGeometry(0.15, 0.04, 3.6);
-    for (const [sx, sy] of [[12.9, 16.27], [10.9, 17.12], [8.9, 18.02]]) {
+    for (let k = 0; k < 5; k++) {
+      const top = 15.9 + k * 0.5;
       const st = new THREE.Mesh(stepTrimGeom, this.landableTrimMat);
-      st.position.set(sx, sy, 0);
+      st.position.set(12.6 - k * 0.8 + 0.325, top + 0.02, 0);
       st.raycast = () => {};
       parent.add(st);
     }
 
     // Side handrails along the dock steps (North and South at z = ±1.8)
-    const stepRailGeom = new THREE.BoxGeometry(6.0, 0.08, 0.08);
+    const stepRailGeom = new THREE.BoxGeometry(4.8, 0.08, 0.08);
     for (const sz of [-1.8, 1.8]) {
       const sr = this.addMeshWithEdges(parent, stepRailGeom, this.metalMat, InkShaderMaterial.defaultInkColor, false);
-      sr.rotation.z = -Math.atan2(2.6, 6.0); // angle ascending from 15.4 to 18.0
-      sr.position.set(10.0, 17.8, sz);
+      sr.rotation.z = -Math.atan2(2.4, 4.0); // angle ascending from 15.4 to 18.0
+      sr.position.set(11.0, 17.7, sz);
     }
   }
 
@@ -1383,14 +1597,7 @@ export class CityBuilder {
     roofW: number,
     roofD: number
   ): void {
-    let nx = 0;
-    let nz = 0;
-    if (Math.abs(config.x) >= Math.abs(config.z)) {
-      nx = config.x > 0 ? -1 : 1;
-    } else {
-      nz = config.z > 0 ? -1 : 1;
-    }
-    if (nx === 0 && nz === 0) nz = -1;
+    const { nx, nz } = this.faceTowardCenter(config);
 
     const hw = roofW * 0.5;
     const hd = roofD * 0.5;
@@ -1446,7 +1653,6 @@ export class CityBuilder {
         const lx = config.x + cx + tx * s * (alongW * 0.5) + nx * (outD * 0.5);
         const lz = config.z + cz + tz * s * (alongW * 0.5) + nz * (outD * 0.5);
         this.webAnchors.push(new THREE.Vector3(lx, y + 1.3, lz));
-        this.addLatchGlint(parent, lx - config.x, y + 1.3, lz - config.z);
       }
 
       this.balconySpecs.push({
@@ -1459,6 +1665,285 @@ export class CityBuilder {
         nz,
       });
     }
+  }
+
+  /**
+   * Shared perch-unit builder: standable slab, trim, 3-sided rails, corner
+   * anchors + glints, and a collision-shell spec. Slab top lands on floorY.
+   */
+  private addPerchUnit(
+    parent: THREE.Group,
+    config: SkyscraperConfig,
+    cx: number,
+    cz: number,
+    floorY: number,
+    alongW: number,
+    outD: number,
+    nx: number,
+    nz: number
+  ): void {
+    const railH = 1.1;
+    const railT = 0.12;
+    const sillY = floorY - 0.15;
+
+    const slabGeom = new THREE.BoxGeometry(nx !== 0 ? outD : alongW, 0.3, nx !== 0 ? alongW : outD);
+    const slab = this.addMeshWithEdges(parent, slabGeom, this.roofMat, InkShaderMaterial.defaultInkColor, true);
+    slab.position.set(cx, sillY, cz);
+
+    const trimT = 0.04;
+    const trimW = 0.18;
+    const trimGeom = new THREE.BoxGeometry(nx !== 0 ? trimW : alongW, trimT, nx !== 0 ? alongW : trimW);
+    const bTrim = new THREE.Mesh(trimGeom, this.landableTrimMat);
+    const trimOffset = outD * 0.5 - trimW * 0.5;
+    bTrim.position.set(cx + nx * trimOffset, sillY + 0.15 + trimT * 0.5, cz + nz * trimOffset);
+    bTrim.raycast = () => {};
+    parent.add(bTrim);
+
+    const outerGeom = new THREE.BoxGeometry(nx !== 0 ? railT : alongW, railH, nx !== 0 ? alongW : railT);
+    const outer = this.addMeshWithEdges(parent, outerGeom, this.metalMat, InkShaderMaterial.defaultInkColor, true);
+    outer.position.set(cx + nx * (outD * 0.5 - railT * 0.5), floorY + railH * 0.5, cz + nz * (outD * 0.5 - railT * 0.5));
+
+    const sideLen = outD - railT;
+    const sideGeom = new THREE.BoxGeometry(nx !== 0 ? sideLen : railT, railH, nx !== 0 ? railT : sideLen);
+    const tx = -nz;
+    const tz = nx;
+    for (const s of [-1, 1]) {
+      const side = this.addMeshWithEdges(parent, sideGeom, this.metalMat, InkShaderMaterial.defaultInkColor, true);
+      side.position.set(
+        cx + tx * s * (alongW * 0.5 - railT * 0.5),
+        floorY + railH * 0.5,
+        cz + tz * s * (alongW * 0.5 - railT * 0.5)
+      );
+    }
+
+    for (const s of [-1, 1]) {
+      const lx = config.x + cx + tx * s * (alongW * 0.5) + nx * (outD * 0.5);
+      const lz = config.z + cz + tz * s * (alongW * 0.5) + nz * (outD * 0.5);
+      this.webAnchors.push(new THREE.Vector3(lx, floorY + 1.3, lz));
+    }
+
+    this.balconySpecs.push({
+      cx: config.x + cx,
+      cy: floorY,
+      cz: config.z + cz,
+      hw: nx !== 0 ? outD * 0.5 : alongW * 0.5,
+      hd: nx !== 0 ? alongW * 0.5 : outD * 0.5,
+      nx,
+      nz,
+    });
+  }
+
+  /**
+   * Juliet rails for short houses: a rail + sill + latches on the facade.
+   * Decorative only (no standing shells) — swing past, don't land.
+   */
+  private buildJulietBalconies(parent: THREE.Group, config: SkyscraperConfig, rows: number): void {
+    const { nx, nz } = this.faceTowardCenter(config);
+    const hw = config.width * 0.5;
+    const hd = config.depth * 0.5;
+    const faceLen = nx !== 0 ? config.depth : config.width;
+    const spread = Math.min(8, faceLen * 0.5 - 2);
+
+    for (let r = 1; r <= rows; r++) {
+      const y = Math.round((config.height * r) / (rows + 1));
+      for (const off of [-spread, 0, spread]) {
+        // The dock's stair-hall notch stays clear: no rails across the entry
+        if (config.skybridgeDock && nx !== 0 && Math.abs(off) < 3) continue;
+        const bx = nx * (hw + 0.05) + (nx !== 0 ? 0 : off);
+        const bz = nz * (hd + 0.05) + (nz !== 0 ? 0 : off);
+        const railGeom = new THREE.BoxGeometry(nx !== 0 ? 0.1 : 2.2, 1.1, nx !== 0 ? 2.2 : 0.1);
+        const rail = this.addMeshWithEdges(parent, railGeom, this.metalMat, InkShaderMaterial.defaultInkColor, true);
+        rail.position.set(bx, y + 0.55, bz);
+        const sillGeom = new THREE.BoxGeometry(nx !== 0 ? 0.5 : 2.4, 0.12, nx !== 0 ? 2.4 : 0.5);
+        const sill = this.addMeshWithEdges(parent, sillGeom, this.roofMat, InkShaderMaterial.defaultInkColor, false);
+        sill.position.set(bx, y, bz);
+        const tx = -nz;
+        const tz = nx;
+        for (const s of [-1, 1]) {
+          const lx = config.x + bx + tx * s * 1.1;
+          const lz = config.z + bz + tz * s * 1.1;
+          this.webAnchors.push(new THREE.Vector3(lx, y + 1.25, lz));
+        }
+      }
+    }
+  }
+
+  /**
+   * Perch ledges on ALL faces every 8m: zip up the tower face, sit on a ledge.
+   * Small (3m x 1.4m) railed perches with latches — the Ledge Tower's personality.
+   */
+  private buildPerchLedges(parent: THREE.Group, config: SkyscraperConfig): void {
+    const hw = config.width * 0.5;
+    const hd = config.depth * 0.5;
+    const faces = [
+      { nx: 1, nz: 0 }, { nx: -1, nz: 0 }, { nx: 0, nz: 1 }, { nx: 0, nz: -1 },
+    ];
+    for (const f of faces) {
+      for (let y = 10; y < config.height - 6; y += 8) {
+        const cx = f.nx * (hw + 0.7);
+        const cz = f.nz * (hd + 0.7);
+        this.addPerchUnit(parent, config, cx, cz, y, 3.0, 1.4, f.nx, f.nz);
+      }
+    }
+  }
+
+  /**
+   * Rooftop pergola: timber posts + beams over the terrace. Shade doodle,
+   * beam-end latches, no collision (posts are thin).
+   */
+  private buildPergola(parent: THREE.Group, config: SkyscraperConfig, roofY: number, roofW: number, roofD: number): void {
+    const postH = 2.6;
+    const px = Math.min(3, roofW * 0.5 - 1.5);
+    const pz = Math.min(2, roofD * 0.5 - 1.5);
+    const postGeom = new THREE.BoxGeometry(0.16, postH, 0.16);
+    for (const sx of [-1, 1]) {
+      for (const sz of [-1, 1]) {
+        const post = this.addMeshWithEdges(parent, postGeom, this.woodMat, InkShaderMaterial.defaultInkColor, false);
+        post.position.set(sx * px, roofY + postH * 0.5, sz * pz);
+      }
+    }
+    const beamGeom = new THREE.BoxGeometry(px * 2 + 0.8, 0.12, 0.18);
+    for (let b = -2; b <= 2; b++) {
+      const beam = this.addMeshWithEdges(parent, beamGeom, this.woodMat, InkShaderMaterial.defaultInkColor, false);
+      beam.position.set(0, roofY + postH, (b / 2) * pz);
+    }
+    for (const s of [-1, 1]) {
+      const lx = config.x + s * (px + 0.4);
+      this.webAnchors.push(new THREE.Vector3(lx, roofY + postH + 0.2, config.z));
+    }
+  }
+
+  /**
+   * Tall brick smokestack: industrial landmark + high-altitude anchor coverage.
+   */
+  private buildSmokestack(parent: THREE.Group, config: SkyscraperConfig): void {
+    const localX = -9;
+    const localZ = -6;
+    const roofY = config.height;
+    const stackH = 38.0;
+    const rBase = 2.4;
+
+    const stackGeom = new THREE.CylinderGeometry(1.7, rBase, stackH, 12);
+    const stack = this.addMeshWithEdges(parent, stackGeom, this.accentMat, InkShaderMaterial.defaultAccentColor, true);
+    stack.position.set(localX, roofY + stackH * 0.5, localZ);
+
+    for (const bandY of [10, 22, 33]) {
+      const bandGeom = new THREE.CylinderGeometry(rBase - (bandY / stackH) * 0.7 + 0.06, rBase - (bandY / stackH) * 0.7 + 0.06, 0.5, 12, 1, true);
+      const band = this.addMeshWithEdges(parent, bandGeom, this.metalMat, InkShaderMaterial.defaultInkColor, false);
+      band.position.set(localX, roofY + bandY, localZ);
+    }
+
+    const rimGeom = new THREE.CylinderGeometry(1.85, 1.85, 0.6, 12);
+    const rim = this.addMeshWithEdges(parent, rimGeom, this.metalMat, InkShaderMaterial.defaultInkColor, true);
+    rim.position.set(localX, roofY + stackH + 0.3, localZ);
+
+    const cx = config.x + localX;
+    const cz = config.z + localZ;
+    this.webAnchors.push(new THREE.Vector3(cx, roofY + stackH + 1.0, cz));
+    this.webAnchors.push(new THREE.Vector3(cx, roofY + 22.0, cz));
+
+    this.stackSpecs.push({ cx, cz, baseY: roofY, topY: roofY + stackH, r: rBase });
+  }
+
+  /**
+   * Waterworks custom roof: twin tanks + chiller farm (manual roof, no defaults).
+   */
+  private buildWaterworksRoof(parent: THREE.Group, config: SkyscraperConfig): void {
+    const roofY = config.height;
+    this.buildWaterTower(parent, 7, roofY, 3, config.x, config.z);
+    this.buildWaterTower(parent, -5, roofY, -3, config.x, config.z);
+    this.buildHvacChiller(parent, 3, roofY, -5, config.x, config.z);
+    this.buildHvacChiller(parent, -11, roofY, 2, config.x, config.z);
+    this.buildHvacChiller(parent, 11, roofY, -2, config.x, config.z);
+  }
+
+  /**
+   * Ink lamp posts ringing the district + avenue outposts: pole, arm, warm
+   * lamp, top + arm-end latches. Small wall shells so you can't walk through.
+   */
+  private buildLampPosts(): void {
+    const lampsGroup = new THREE.Group();
+    lampsGroup.name = 'LampPosts';
+    const positions: Array<[number, number]> = [
+      [28, 28], [-28, 28], [28, -28], [-28, -28],
+      [64, 0], [-64, 0], [0, 24], [0, -30],
+      [100, 0], [-100, 0], [0, 100], [0, -100],
+      [100, 100], [-100, 100], [100, -100], [-100, -100],
+    ];
+    for (const [lx, lz] of positions) {
+      const poleGeom = new THREE.CylinderGeometry(0.1, 0.14, 7.0, 8);
+      const pole = this.addMeshWithEdges(lampsGroup, poleGeom, this.metalMat, InkShaderMaterial.defaultInkColor, true);
+      pole.position.set(lx, 0.5 + 3.5, lz);
+
+      const armGeom = new THREE.BoxGeometry(1.4, 0.1, 0.1);
+      const arm = this.addMeshWithEdges(lampsGroup, armGeom, this.metalMat, InkShaderMaterial.defaultInkColor, false);
+      arm.position.set(lx + 0.6, 7.3, lz);
+
+      const headGeom = new THREE.BoxGeometry(0.34, 0.22, 0.22);
+      const head = this.addMeshWithEdges(lampsGroup, headGeom, this.metalMat, InkShaderMaterial.defaultInkColor, false);
+      head.position.set(lx + 1.25, 7.2, lz);
+
+      if (!this.lampGlowMat) {
+        this.lampGlowMat = new THREE.MeshBasicMaterial({ color: 0xe8a33d, toneMapped: false });
+      }
+      const bulbGeom = new THREE.SphereGeometry(0.11, 6, 6);
+      const bulb = new THREE.Mesh(bulbGeom, this.lampGlowMat);
+      bulb.position.set(lx + 1.25, 7.05, lz);
+      bulb.raycast = () => {};
+      lampsGroup.add(bulb);
+
+      this.webAnchors.push(new THREE.Vector3(lx, 7.7, lz));
+      this.webAnchors.push(new THREE.Vector3(lx + 1.25, 7.35, lz));
+      this.streetPropSpecs.push({ x: lx, z: lz, r: 0.3, h: 7.0 });
+    }
+    this.group.add(lampsGroup);
+  }
+
+  /**
+   * Street micro-doodles: red fire hydrants + trash cans near lamps and corners.
+   * Tiny wall shells, zero anchors — set dressing with collision.
+   */
+  private buildStreetProps(): void {
+    const propsGroup = new THREE.Group();
+    propsGroup.name = 'StreetProps';
+
+    const hydrants: Array<[number, number]> = [
+      [14, 14], [-14, 14], [14, -14], [-14, -14],
+      [30, 8], [-30, -8], [8, 30], [-8, -30], [40, -20], [-40, 20],
+    ];
+    for (const [hx, hz] of hydrants) {
+      const baseGeom = new THREE.CylinderGeometry(0.22, 0.24, 0.12, 8);
+      const base = this.addMeshWithEdges(propsGroup, baseGeom, this.accentMat, InkShaderMaterial.defaultAccentColor, false);
+      base.position.set(hx, 0.56, hz);
+      const bodyGeom = new THREE.CylinderGeometry(0.16, 0.18, 0.55, 8);
+      const body = this.addMeshWithEdges(propsGroup, bodyGeom, this.accentMat, InkShaderMaterial.defaultAccentColor, true);
+      body.position.set(hx, 0.9, hz);
+      const domeGeom = new THREE.SphereGeometry(0.16, 8, 6);
+      const dome = this.addMeshWithEdges(propsGroup, domeGeom, this.accentMat, InkShaderMaterial.defaultAccentColor, false);
+      dome.position.set(hx, 1.18, hz);
+      const nozzleGeom = new THREE.CylinderGeometry(0.07, 0.07, 0.22, 6);
+      for (const s of [-1, 1]) {
+        const nozzle = this.addMeshWithEdges(propsGroup, nozzleGeom, this.accentMat, InkShaderMaterial.defaultAccentColor, false);
+        nozzle.rotation.z = Math.PI * 0.5;
+        nozzle.position.set(hx + s * 0.2, 0.95, hz);
+      }
+      this.streetPropSpecs.push({ x: hx, z: hz, r: 0.28, h: 0.9 });
+    }
+
+    const cans: Array<[number, number]> = [
+      [29.2, 29.2], [-26.8, 29.2], [29.2, -26.8], [-26.8, -26.8],
+      [65.2, 1.2], [-62.8, 1.2], [1.2, 25.2], [1.2, -28.8],
+    ];
+    for (const [cx, cz] of cans) {
+      const canGeom = new THREE.CylinderGeometry(0.3, 0.27, 0.8, 10);
+      const can = this.addMeshWithEdges(propsGroup, canGeom, this.metalMat, InkShaderMaterial.defaultInkColor, true);
+      can.position.set(cx, 0.9, cz);
+      const lidGeom = new THREE.CylinderGeometry(0.33, 0.33, 0.08, 10);
+      const lid = this.addMeshWithEdges(propsGroup, lidGeom, this.metalMat, InkShaderMaterial.defaultInkColor, false);
+      lid.position.set(cx, 1.34, cz);
+      this.streetPropSpecs.push({ x: cx, z: cz, r: 0.35, h: 1.0 });
+    }
+    this.group.add(propsGroup);
   }
 
   /**
@@ -1487,7 +1972,6 @@ export class CityBuilder {
 
     const tipY = roofY + 0.6 + mastHeight + 0.3;
     this.webAnchors.push(new THREE.Vector3(config.x, tipY, config.z));
-    this.addLatchGlint(parent, 0, tipY - roofY, 0);
   }
 
   /**

@@ -324,6 +324,26 @@ export class EnemyManager {
         position: new THREE.Vector3(6.0, 15.5, -12.4),
         allowedTypes: ['sniper'],
         floorName: 'Scaffolding East Beam'
+      },
+      {
+        position: new THREE.Vector3(60.0, 66.0, 10.0),
+        allowedTypes: ['sniper'],
+        floorName: 'Glass Slab Roof'
+      },
+      {
+        position: new THREE.Vector3(-4.0, 88.0, 64.0),
+        allowedTypes: ['sniper'],
+        floorName: 'Deco Crown Roof'
+      },
+      {
+        position: new THREE.Vector3(57.5, 24.0, -48.0),
+        allowedTypes: ['sniper'],
+        floorName: 'Copper Terrace Ring'
+      },
+      {
+        position: new THREE.Vector3(-54.0, 28.8, 48.0),
+        allowedTypes: ['sniper'],
+        floorName: 'Theater Fly Cap'
       }
     );
 
