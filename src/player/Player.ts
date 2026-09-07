@@ -9,6 +9,7 @@ import { FireResult } from '../weapons/BaseWeapon';
 import { Sniper } from '../weapons/Sniper';
 import { WorldCollider, PushResult } from '../world/WorldCollider';
 import { Spring } from '../core/Spring';
+import { chestY, eyeOffsetFromCenter } from '../core/CoverMetrics';
 
 /**
  * Landing-snap window: feet snap onto a floor top only when inside
@@ -51,7 +52,7 @@ export class Player {
   public bobPhase: number = 0;
   public bobAmt: number = 0;
   public stepDist: number = 0;
-  public eyeH: number = 0.8;
+  public eyeH: number = eyeOffsetFromCenter(false);
 
   // Base FOV
   public baseFov: number = 75;
@@ -99,7 +100,7 @@ export class Player {
   public isSprinting: boolean = false;
   public mantleCooldown: number = 0;
 
-  // Tap-vs-hold Space while swinging: tap slings, hold winches.
+  // Tap-vs-hold E after a web attaches: tap just swings, hold winches to the anchor.
   private winchWait: number = -1;
   private readonly winchHoldTime: number = 0.18;
 
@@ -115,7 +116,7 @@ export class Player {
   private _rightFlat: THREE.Vector3 = new THREE.Vector3();
   private _inputDir: THREE.Vector3 = new THREE.Vector3();
   private _euler: THREE.Euler = new THREE.Euler(0, 0, 0, 'YXZ');
-  private _eyeOffset: THREE.Vector3 = new THREE.Vector3(0, 0.8, 0);
+  private _eyeOffset: THREE.Vector3 = new THREE.Vector3(0, eyeOffsetFromCenter(false), 0);
   private _downRay: THREE.Raycaster = new THREE.Raycaster();
   private _box: THREE.Box3 = new THREE.Box3();
   private _closest: THREE.Vector3 = new THREE.Vector3();
@@ -151,6 +152,8 @@ export class Player {
 
   public bindCollider(c: WorldCollider): void {
     this.worldCollider = c;
+    this.physics.worldCollider = c;
+    this.webShooter.worldCollider = c;
   }
 
   public reset(): void {
@@ -172,7 +175,7 @@ export class Player {
     this.bobPhase = 0;
     this.bobAmt = 0;
     this.stepDist = 0;
-    this.eyeH = 0.8;
+    this.eyeH = eyeOffsetFromCenter(false);
     this.landDipSpring.set(0);
     this.footstepTimer = 0;
     soundManager.setHeartbeat(false);
@@ -192,6 +195,15 @@ export class Player {
 
   public get position(): THREE.Vector3 {
     return this.physics.position;
+  }
+
+  /**
+   * World Y of the chest that enemies aim at and run line-of-sight against.
+   * Standing this sits above a half-height rail (exposed); crouched it sits
+   * below one (covered), which is what makes railings work as cover.
+   */
+  public get chestY(): number {
+    return chestY(this.physics.position.y, this.physics.playerHeight);
   }
 
   /**
@@ -384,23 +396,20 @@ export class Player {
     // Scan for potential anchors ahead (forgiving cone + height bias + latch magnet)
     this.webShooter.scanForTargets(this.camera, collidables, this.physics.position, webAnchors);
 
-    // Web attach (tap E / right-click). The line is STICKY: it stays connected
-    // until you sling (Space), grab elsewhere (E again), land, or go slack.
+    // Web attach (E / right-click). The line is STICKY: it stays connected until
+    // you grab elsewhere (E again), winch and let go, land, or go slack.
+    // Keep E held after the shot and the line winches you in (handled below).
     if (this.input.webJustPressed) {
       if (this.isSwinging) {
         // Re-target mid-swing: drop the old line, grab the new anchor
         this.webShooter.releaseWeb(false);
-        const attached = this.webShooter.shootWeb(undefined, this.physics.position);
-        if (!attached) {
-          soundManager.playDryWeb();
-          if (this.onDryWeb) this.onDryWeb();
-        }
+      }
+      const attached = this.webShooter.shootWeb(undefined, this.physics.position);
+      if (attached) {
+        this.winchWait = 0;
       } else {
-        const attached = this.webShooter.shootWeb(undefined, this.physics.position);
-        if (!attached) {
-          soundManager.playDryWeb();
-          if (this.onDryWeb) this.onDryWeb();
-        }
+        soundManager.playDryWeb();
+        if (this.onDryWeb) this.onDryWeb();
       }
     }
 
@@ -420,24 +429,19 @@ export class Player {
         // Zip-cancel: jump converts zip into forward/upward release boost
         this.webShooter.cancelWebZip(forward);
         this.physics.jumpBufferTimer = 0;
-      } else if (this.isSwinging) {
-        // Don't sling yet: tap = sling, hold = winch (decided below)
-        this.winchWait = 0;
-        this.physics.jumpBufferTimer = 0;
       } else if (this.physics.isGrounded || this.physics.coyoteTimer > 0) {
         this.physics.jump();
         this.physics.jumpBufferTimer = 0;
       }
     }
 
-    // Tap-vs-hold Space while swinging. Tap yanks you to the anchor (sling);
-    // holding reels you all the way to the point (winch). Letting go mid-winch
-    // drops the line and keeps your momentum with a small hop.
+    // Tap-vs-hold E, decided on the line E just attached. Tap and let go: the web
+    // stays stuck and you swing on it. Keep holding past winchHoldTime and it reels
+    // you all the way to the point (winch).
     if (this.winchWait >= 0 && this.isSwinging) {
       this.winchWait += dt;
-      if (!this.input.isJumpHeld()) {
-        this.physics.slingTowardAnchor(forward);
-        this.webShooter.notifyReleased();
+      if (!this.input.isWebHeld()) {
+        // Tap: line is already attached, nothing more to do — just swing.
         this.winchWait = -1;
       } else if (this.winchWait >= this.winchHoldTime) {
         this.physics.winching = true;
@@ -446,7 +450,7 @@ export class Player {
     } else if (this.winchWait >= 0) {
       this.winchWait = -1;
     }
-    if (this.physics.winching && (!this.input.isJumpHeld() || !this.isSwinging)) {
+    if (this.physics.winching && (!this.input.isWebHeld() || !this.isSwinging)) {
       // Let go mid-winch: line goes dead, you keep momentum and fall.
       this.physics.winching = false;
       if (this.isSwinging) {
@@ -455,13 +459,14 @@ export class Player {
     }
 
     // 4. Stance: crouch (C) sits you down, Shift sprints — ground only.
-    // Space with no web is just a plain jump (handled by the buffer below).
+    // Space is a plain jump and nothing else (handled by the buffer above).
     const groundedNow = this.physics.isGrounded;
     const aimingNow = this.input.isZoomHolding() && !this.isSwinging;
     let crouch = this.input.isCrouchHeld() && groundedNow;
     if (!this.input.isCrouchHeld() && this.physics.crouching && this.worldCollider) {
-      // Trying to stand: check headroom for the full 1.8m body first
-      const needHead = this.physics.position.y + 0.95;
+      // Trying to stand: the full standing body has to fit above the crouched feet
+      const feetY = this.physics.position.y - this.physics.playerHeight * 0.5;
+      const needHead = feetY + this.physics.standHeight + 0.05;
       const ceil = this.worldCollider.ceilingAt(
         this.physics.position.x, needHead - 0.1, this.physics.position.z
       );
@@ -530,8 +535,9 @@ export class Player {
       }
     }
 
-    // Smooth eye level transition between standing (0.8) and crouching (0.35)
-    const targetEye = this.isCrouching ? 0.35 : 0.8;
+    // Smooth eye level transition. Offsets come from CoverMetrics so the crouched
+    // eye stays below the rail lip (0.72m up) while the standing eye clears it (1.70m).
+    const targetEye = eyeOffsetFromCenter(this.isCrouching);
     this.eyeH = THREE.MathUtils.damp(this.eyeH, targetEye, 14.0, dt);
 
     // Apply vertical step bounce, lateral head sway, land dip spring to eye position

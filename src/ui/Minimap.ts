@@ -95,7 +95,17 @@ export class Minimap {
     for (const e of enemies) {
       const [ex, ey] = dot(e.x, e.z);
       if (ex < 0 || ey < 0 || ex > S || ey > S) continue;
-      if (e.kind === 'drone') {
+      if (e.kind.startsWith('player:')) {
+        // A rival player, drawn in their own ink with a ring so they never
+        // read as one of the AI hostiles.
+        ctx.fillStyle = e.kind.slice(7);
+        ctx.beginPath();
+        ctx.arc(ex, ey, 4, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.strokeStyle = '#152778';
+        ctx.lineWidth = 1.5;
+        ctx.stroke();
+      } else if (e.kind === 'drone') {
         ctx.fillStyle = '#e67e22';
         ctx.beginPath();
         ctx.arc(ex, ey, 3, 0, Math.PI * 2);

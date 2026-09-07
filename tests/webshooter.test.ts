@@ -2,6 +2,8 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import * as THREE from 'three';
 import { scoreAnchor, RopeState, WebShooter } from '../src/player/WebShooter';
 import { SwingPhysics, MovementMode } from '../src/player/SwingPhysics';
+import { CityBuilder } from '../src/world/CityBuilder';
+import { WorldCollider } from '../src/world/WorldCollider';
 
 describe('WebShooter - scoreAnchor Pure Function & Scoring System', () => {
   it('computes exact base score for centered anchor with zero height bonus', () => {
@@ -188,5 +190,62 @@ describe('WebShooter - sticky line and mid-swing re-target', () => {
     expect(shooter.shootWeb(low, physics.position)).toBe(false);
     expect(physics.mode).toBe(MovementMode.AIR);
     expect(shooter.isWebActive).toBe(false);
+  });
+});
+
+describe('WebShooter - latching solid geometry that never registered a mesh', () => {
+  const cb = new CityBuilder();
+  const collidables = cb.getCollidableMeshes();
+  const anchors = cb.getWebAnchors();
+  const coll = cb.getWorldCollider();
+
+  // Low rooftop with a clear line to the site crane's mast head
+  const EYE = new THREE.Vector3(0, 15.9, 42);
+  const CRANE_HEAD = new THREE.Vector3(2, 45.5, -2);
+
+  function aimAtCraneHead(bindCollider: boolean) {
+    const physics = new SwingPhysics();
+    const shooter = new WebShooter(physics);
+    if (bindCollider) shooter.worldCollider = coll;
+    const cam = new THREE.PerspectiveCamera(75, 16 / 9, 0.1, 1000);
+    cam.position.copy(EYE);
+    cam.lookAt(CRANE_HEAD);
+    cam.updateMatrixWorld(true);
+    physics.position.copy(EYE);
+    return shooter.scanForTargets(cam, collidables, physics.position, anchors);
+  }
+
+  it('the crane is barely present in the collidable mesh list', () => {
+    // Its lattice struts opt out, so a mesh raycast has almost nothing to hit and
+    // the web sails straight through the crane to whatever stands behind it.
+    const meshOnly = aimAtCraneHead(false);
+    expect(meshOnly).not.toBeNull();
+    expect(meshOnly!.point.y).toBeGreaterThan(48); // sailed past the 46.9m mast head
+  });
+
+  it('latches the crane itself once the collision shells are consulted', () => {
+    const withShells = aimAtCraneHead(true);
+    expect(withShells).not.toBeNull();
+    expect(withShells!.isValid).toBe(true);
+    // Crane mast head shell spans y 44.5..46.9 around x 0.8..3.2, z -3.2..-0.8
+    expect(withShells!.point.y).toBeGreaterThanOrEqual(44.5);
+    expect(withShells!.point.y).toBeLessThanOrEqual(46.9);
+    expect(Math.hypot(withShells!.point.x - 2, withShells!.point.z + 2)).toBeLessThan(2.5);
+  });
+
+  it('latches walls but never the floor you are standing on', () => {
+    const w = new WorldCollider();
+    w.addBoxCoords(-50, -2, -50, 50, 0.5, 50, 'floor'); // street slab
+    w.addBoxCoords(10, 0.5, -5, 14, 30, 5, 'wall');     // a building beside it
+    w.finalize();
+
+    const down = new THREE.Vector3(0, -1, 0);
+    const across = new THREE.Vector3(1, 0, 0);
+    // Straight down at the deck: nothing to latch
+    expect(w.raycast(new THREE.Vector3(0, 10, 0), down, 110, 'floor')).toBeNull();
+    // Sideways at the building: latches its face
+    const wall = w.raycast(new THREE.Vector3(0, 10, 0), across, 110, 'floor');
+    expect(wall).not.toBeNull();
+    expect(wall!.box.tag).toBe('wall');
   });
 });

@@ -365,7 +365,8 @@ export class DroneEnemy extends Enemy {
     if (this.losTimer <= 0) {
       this.losTimer = 0.25;
       this.rightMuzzleSocket.getWorldPosition(this.tmpMuzzle);
-      this.tmpAim.copy(playerPos); // Center chest
+      this.tmpAim.copy(playerPos); // Chest, not capsule centre — clears a rail only when the player stands
+      this.tmpAim.y = this.resolveAimY(playerPos);
       if (this.worldCollider) {
         this.losClear = this.worldCollider.hasLineOfSight(this.tmpMuzzle, this.tmpAim);
       } else {
@@ -400,6 +401,7 @@ export class DroneEnemy extends Enemy {
         if (this.worldCollider) {
           this.rightMuzzleSocket.getWorldPosition(this.tmpMuzzle);
           this.tmpAim.copy(playerPos);
+          this.tmpAim.y = this.resolveAimY(playerPos);
           this.losClear = this.worldCollider.hasLineOfSight(this.tmpMuzzle, this.tmpAim);
         }
         if (this.losClear) {
@@ -437,6 +439,7 @@ export class DroneEnemy extends Enemy {
 
     // Aim toward player chest
     this.tmpAim.copy(playerPos);
+    this.tmpAim.y = this.resolveAimY(playerPos);
 
     // Dynamic combat spread scaled with player speed (inspired by inspiration's const sp = spread * (1 + P.speed * 0.06))
     const pSpeed = this.playerSpeed || 0;

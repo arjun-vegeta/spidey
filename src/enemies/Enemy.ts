@@ -119,6 +119,21 @@ export abstract class Enemy {
   // Projectile queue fired by this enemy
   public pendingProjectiles: ProjectileSpawnRequest[] = [];
 
+  /**
+   * World Y of the player's chest, refreshed every frame by EnemyManager and
+   * used as both the aim point and the line-of-sight target. Aiming at the raw
+   * capsule centre would land the standing aim point exactly on a half-height
+   * rail's lip; this sits clearly above it standing and clearly below it
+   * crouched, which is what turns railings into real cover.
+   * Falls back to `playerPos.y` when 0 (enemy driven directly, e.g. in tests).
+   */
+  public aimTargetY: number = 0;
+
+  /** Resolves the chest aim height, tolerating an unset `aimTargetY`. */
+  protected resolveAimY(playerPos: THREE.Vector3): number {
+    return this.aimTargetY !== 0 ? this.aimTargetY : playerPos.y;
+  }
+
   // Current wave number (set by EnemyManager each frame, used for behavior gates)
   public waveNumber: number = 1;
 

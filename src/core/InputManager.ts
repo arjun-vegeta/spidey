@@ -5,13 +5,16 @@
  * - A / D / ArrowLeft / ArrowRight: Strafe (ground/air) | Arc steering lean (swinging).
  * - Shift: SPRINT on ground (hold + W) | Web reel-in while swinging.
  *   No sprint in air — air feet don't run.
- * - C: CROUCH / sit on ground (cover height) | Web reel-in while swinging.
- *   Standing back up needs headroom or you stay down.
+ * - C: CROUCH to rail height (0.9m) on ground | Web reel-in while swinging.
+ *   Behind any railing this is real cover: enemy bullets stop in the rail and
+ *   they hold fire, but your own shots hit it too. Stand to shoot. In the open,
+ *   crouching blocks nothing and you shoot and get shot normally.
+ *   Standing back up needs headroom or you stay down. See core/CoverMetrics.ts.
  * - Ctrl / X: Web reel-out (swinging) | Dive assist (air: pitch assist + speed boost).
- * - Space: Jump (ground) | TAP = sling to anchor (swinging) |
- *   HOLD = winch all the way to the point, let go to fall (swinging).
- * - E / Right-Click (tap): Shoot web & STAY attached. Tap E again mid-swing to
- *   drop the line and grab a new anchor. Tap E with no target = dry thwip.
+ * - Space: Jump. Nothing else — no web actions live on Space.
+ * - E / Right-Click: TAP = shoot web & STAY attached (tap again mid-swing to drop
+ *   the line and grab a new anchor; no target = dry thwip).
+ *   HOLD = winch all the way to the point you just shot, let go to fall.
  * - F: Web zip to target anchor / ledge.
  * - Left-Click / V / Enter: Primary fire active weapon (pistol works while swinging).
  * - Q / Middle-Click: Aim Down Sights (ADS) / Sniper scope toggle.
@@ -30,6 +33,21 @@ export class InputManager {
   public onLockChange?: (locked: boolean) => void;
   // Headless / automated-test fallback: play button bypasses pointer lock
   public lockBypass: boolean = false;
+
+  /**
+   * Whether a click may GRAB the mouse.
+   *
+   * False everywhere except an actually-running game, and it has to be: the
+   * mousedown listener is on `window`, so without this gate the first click on
+   * any menu button — SOLO, a room code, a character card — captured the
+   * pointer and the cursor vanished while the menu was still on screen, with
+   * nothing left to click it with.
+   *
+   * `Game` opens this gate when a run starts and closes it on the way back to
+   * the menu. Even while open, only clicks landing on the game canvas count,
+   * so the pause and death overlays stay clickable mid-run.
+   */
+  public pointerLockOnClick: boolean = false;
   public get isPlaying(): boolean { return this.isLocked || this.lockBypass; }
 
   // Single-frame trigger states
@@ -126,6 +144,13 @@ export class InputManager {
     }, 600);
   }
 
+  /** True when an event landed on the game canvas rather than on UI over it. */
+  private isCanvasTarget(target: EventTarget | null): boolean {
+    const el = this.domElement as HTMLElement & { contains?: (n: Node) => boolean };
+    if (!el || typeof el.contains !== 'function') return false;
+    return target instanceof Node && (target === el || el.contains(target));
+  }
+
   public exitPointerLock(): void {
     if (document.exitPointerLock) {
       document.exitPointerLock();
@@ -179,7 +204,11 @@ export class InputManager {
 
   private onMouseDown(e: MouseEvent): void {
     if (!this.isLocked) {
-      this.requestPointerLock();
+      // Click-to-recapture, but only inside a running game and only on the
+      // canvas itself — never on a menu, a pause card or a HUD button.
+      if (this.pointerLockOnClick && this.isCanvasTarget(e.target)) {
+        this.requestPointerLock();
+      }
       return;
     }
 
@@ -236,6 +265,7 @@ export class InputManager {
   public isMovingRight(): boolean { return !!(this.keys['d'] || this.keys['arrowright'] || this.keys['keyd']); }
   public isJumping(): boolean { return !!(this.keys[' '] || this.keys['space']); }
   public isJumpHeld(): boolean { return !!(this.keys[' '] || this.keys['space']); }
+  public isWebHeld(): boolean { return !!(this.keys['e'] || this.keys['keye'] || this.mouseButtons[2]); }
   public isSprintHeld(): boolean { return !!(this.keys['shift'] || this.keys['shiftleft'] || this.keys['shiftright']); }
   public isCrouchHeld(): boolean { return !!(this.keys['c'] || this.keys['keyc'] || this.keys['control'] || this.keys['controlleft']); }
   public isReelingIn(): boolean { return !!(this.keys['shift'] || this.keys['shiftleft'] || this.keys['shiftright'] || this.keys['c'] || this.keys['keyc']); }

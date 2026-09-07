@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { SwingPhysics, MovementMode } from './SwingPhysics';
+import { WorldCollider } from '../world/WorldCollider';
 import { WebRenderer } from '../effects/WebRenderer';
 import { soundManager } from '../core/SoundManager';
 
@@ -54,6 +55,19 @@ export class WebShooter {
   private tmpBase: THREE.Vector3 = new THREE.Vector3();
   private tmpTo: THREE.Vector3 = new THREE.Vector3();
   private tmpN: THREE.Vector3 = new THREE.Vector3();
+  private tmpPoint: THREE.Vector3 = new THREE.Vector3();
+  private tmpNormal: THREE.Vector3 = new THREE.Vector3();
+
+  /**
+   * Bound by Player. The authority on what is solid: visual meshes opt in to the
+   * collidable list one at a time, so lattice structures like the site crane are
+   * mostly invisible to a mesh raycast (24 of its 120 meshes were registered) and
+   * webs sailed straight through them. Latching tests the collision shells instead,
+   * ignoring 'floor' so you never web the deck under your feet.
+   */
+  public worldCollider: WorldCollider | null = null;
+  /** Matches the mesh raycaster's near plane: nothing latches in your face. */
+  private readonly minLatchDist: number = 2.0;
 
   constructor(physics: SwingPhysics) {
     this.physics = physics;
@@ -77,26 +91,52 @@ export class WebShooter {
       this.raycaster.far = this.maxWebDistance;
       this.raycaster.near = 2.0;
 
+      // Nearest solid along this ray, from either world: the registered mesh list
+      // and the collision shells. Assist rays (i > 0) may look past geometry below
+      // the eyeline to reach something worth swinging from; the centre ray takes
+      // whatever it is pointed at.
+      let hitDist = Infinity;
+      let hitPoint: THREE.Vector3 | null = null;
+      let hitNormal: THREE.Vector3 | null = null;
+
       const hits = this.raycaster.intersectObjects(collidables, false);
       for (const hit of hits) {
         if (!hit.point) continue;
-        if (playerPos && hit.point.y < playerPos.y + 1.5) {
-          if (i > 0) continue;
+        if (playerPos && hit.point.y < playerPos.y + 1.5 && i > 0) continue;
+        hitDist = hit.distance;
+        hitPoint = this.tmpPoint.copy(hit.point);
+        hitNormal = hit.face
+          ? this.tmpNormal.copy(hit.face.normal).transformDirection(hit.object.matrixWorld)
+          : this.tmpNormal.set(0, 1, 0);
+        break;
+      }
+
+      if (this.worldCollider) {
+        const shell = this.worldCollider.raycast(origin, this.tmpDir, this.maxWebDistance, 'floor');
+        const usable = shell !== null
+          && shell.dist >= this.minLatchDist
+          && shell.dist < hitDist
+          && !(playerPos && shell.point.y < playerPos.y + 1.5 && i > 0);
+        if (usable && shell) {
+          hitDist = shell.dist;
+          hitPoint = this.tmpPoint.copy(shell.point);
+          hitNormal = this.tmpNormal.copy(shell.normal);
         }
-        const penalty = i * 6.0 - Math.max(0, hit.point.y - (playerPos ? playerPos.y : 0)) * 0.35;
-        const score = hit.distance + penalty;
+      }
+
+      if (hitPoint && hitNormal) {
+        const penalty = i * 6.0 - Math.max(0, hitPoint.y - (playerPos ? playerPos.y : 0)) * 0.35;
+        const score = hitDist + penalty;
         if (!best || score < best.score) {
-          const n = hit.face ? hit.face.normal.clone().transformDirection(hit.object.matrixWorld) : new THREE.Vector3(0, 1, 0);
           best = {
             isValid: true,
-            point: hit.point.clone(),
-            normal: n,
-            distance: hit.distance,
+            point: hitPoint.clone(),
+            normal: hitNormal.clone(),
+            distance: hitDist,
             penalty,
             score,
           };
         }
-        break;
       }
       if (best && i === 0) break;
     }

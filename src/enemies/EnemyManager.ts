@@ -8,6 +8,7 @@ import { FireResult } from '../weapons/BaseWeapon';
 import { InkParticles } from '../effects/InkParticles';
 import { soundManager } from '../core/SoundManager';
 import type { WorldCollider } from '../world/WorldCollider';
+import { CHARACTER_HEIGHT, chestY, hitbandMaxY, hitbandMinY } from '../core/CoverMetrics';
 
 export interface EnemyProjectile {
   id: string;
@@ -847,6 +848,12 @@ export class EnemyManager {
     // 3. Update all living enemies
     const playerPos = player.position;
     const playerSpeed = player.velocity ? player.velocity.length() : 0;
+    // Chest aim height for this frame. Crouched it drops below rail height, so
+    // every shooter's line-of-sight check finds the railing and holds fire.
+    const aimY = chestY(
+      playerPos.y,
+      player.physics ? player.physics.playerHeight : CHARACTER_HEIGHT
+    );
     for (let i = this.enemies.length - 1; i >= 0; i--) {
       const enemy = this.enemies[i];
 
@@ -865,6 +872,7 @@ export class EnemyManager {
       enemy.speedMultiplier = this.mods.speed;
       enemy.damageMultiplier = this.mods.damage;
       if (enemy.worldCollider !== this.worldCollider) enemy.bindCollider(this.worldCollider);
+      enemy.aimTargetY = aimY;
       if (this.waveInProgress && !enemy.alerted && !enemy.isDead) {
         enemy.alert(playerPos);
       }
@@ -881,6 +889,7 @@ export class EnemyManager {
     for (let i = this.corpses.length - 1; i >= 0; i--) {
       const corpse = this.corpses[i];
       if (corpse.worldCollider !== this.worldCollider) corpse.bindCollider(this.worldCollider);
+      corpse.aimTargetY = aimY;
       corpse.update(dt, playerPos, camera, this.collidableMeshes, playerSpeed);
       if (!corpse.isDying) {
         this.scene.remove(corpse.group);
@@ -968,11 +977,12 @@ export class EnemyManager {
   private updateProjectiles(dt: number, player: Player, camera?: THREE.PerspectiveCamera): void {
     const playerPos = player.position;
     const playerRadius = 0.65;
-    // Dynamic hitbox: crouching (1.2m) genuinely dodges chest-aimed fire.
-    // playerPos is body CENTER, so the band is center +/- half height.
-    const pHalfH = ((player.physics ? player.physics.playerHeight : 1.8) * 0.5);
-    const playerMinY = playerPos.y - pHalfH;
-    const playerMaxY = playerPos.y + pHalfH + 0.35;
+    // Dynamic hitbox: crouching (0.9m) genuinely ducks under chest-aimed fire.
+    // playerPos is the body CENTER. The crouched band deliberately gets NO head
+    // margin so it tops out at rail height and a railing eats the bullet first.
+    const pHeight = player.physics ? player.physics.playerHeight : CHARACTER_HEIGHT;
+    const playerMinY = hitbandMinY(playerPos.y, pHeight);
+    const playerMaxY = hitbandMaxY(playerPos.y, pHeight);
 
     for (let i = this.projectiles.length - 1; i >= 0; i--) {
       const proj = this.projectiles[i];

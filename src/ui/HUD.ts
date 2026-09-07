@@ -225,7 +225,7 @@ export class HUD {
           <label class="pause-row">VOLUME <input id="set-vol" type="range" min="0" max="1" step="0.05"><span id="set-vol-v"></span></label>
           <label class="pause-row">FOV <input id="set-fov" type="range" min="70" max="90" step="1"><span id="set-fov-v"></span></label>
           <label class="pause-row pause-check"><input id="set-map" type="checkbox"> MINIMAP (N)</label>
-          <div class="pause-keys">WASD walk · SHIFT sprint · C crouch · E web (tap) · SPACE tap sling / hold winch · F zip · Q aim · R reload · M mute</div>
+          <div class="pause-keys">WASD walk · SPACE jump · SHIFT sprint · C crouch (duck behind rails: covered, but you can't shoot) · E tap web / hold winch · F zip · Q aim · R reload · M mute</div>
         </div>
       </div>
     `;
