@@ -74,6 +74,7 @@ export class CityBuilder {
   private stackSpecs: Array<{ cx: number; cz: number; baseY: number; topY: number; r: number }> = [];
   private towerSpecs: Array<{ cx: number; cz: number; hw: number; hd: number; h: number }> = [];
   private streetPropSpecs: Array<{ x: number; z: number; r: number; h: number }> = [];
+  private twoStoryColliders: Array<{ minX: number; minY: number; minZ: number; maxX: number; maxY: number; maxZ: number; tag: 'wall' | 'floor' }> = [];
   private lampGlowMat: THREE.MeshBasicMaterial | null = null;
 
   // Shared ink materials
@@ -197,7 +198,7 @@ export class CityBuilder {
       // North block 2 (West)
       [-55, 65, 42, 45],
       // South block 1
-      [0, -65, 40, 45],
+      [0, -50, 32, 28],
       // South block 2 (West)
       [-55, -65, 42, 45],
       // West block 1
@@ -434,6 +435,9 @@ export class CityBuilder {
       this.buildSingleSkyscraper(buildingsGroup, config);
       this.mapBuildingList.push({ x: config.x, z: config.z, w: config.width, d: config.depth });
     }
+
+    this.buildTwoStoryDepot(buildingsGroup);
+    this.mapBuildingList.push({ x: 0.0, z: -50.0, w: 24.0, d: 20.0 });
 
     this.group.add(buildingsGroup);
     this.buildLampPosts();
@@ -709,6 +713,16 @@ export class CityBuilder {
       }
     }
 
+    // North Two-Story Depot (Grand Central Atrium & Observatorium, x: 0, z: -50)
+    // Central Grand Staircase ramp (Ground 0.6 -> 2nd floor 5.2, z -48.0 to -56.0, x: -2.5..2.5)
+    coll.addRampCoords(-2.5, -56.0, 2.5, -48.0, 'z', 5.2, 0.6, 0.4);
+    // NE Corner Roof Staircase ramp (2nd floor 5.2 -> Roof 9.8, z -52.0 to -57.6, x: 8.5..11.5)
+    coll.addRampCoords(8.5, -57.6, 11.5, -52.0, 'z', 9.8, 5.2, 0.4);
+    // All solid walls, floors, partitions, steps, and balustrades for North Depot
+    for (const b of this.twoStoryColliders) {
+      coll.addBoxCoords(b.minX, b.minY, b.minZ, b.maxX, b.maxY, b.maxZ, b.tag);
+    }
+
     coll.finalize();
     this.worldCollider = coll;
   }
@@ -723,6 +737,588 @@ export class CityBuilder {
 
   public getMapBuildings(): Array<{ x: number; z: number; w: number; d: number }> {
     return this.mapBuildingList;
+  }
+
+  /**
+   * Constructs the North Two-Story Grand Central Atrium & Observatorium (x: 0, z: -50, w: 24, d: 20).
+   * Features:
+   * - Grand double-height central galleria atrium with open void up to central skylight
+   * - Central 5m-wide grand staircase ascending to a wraparound mezzanine gallery
+   * - West Wing: Armory & Dispatch Vault with security counter and weapon racks
+   * - East Wing: Archive & Cartography Library with study tables and bookcases
+   * - Second Floor: Mezzanine Promenade with solid iron balustrades overlooking the atrium below
+   * - NE Corner Staircase leading up into a decorative Rooftop Lantern Cupola
+   * - Rooftop Terrace with central glass lantern dome, water tower, HVAC plant, and perimeter parapets
+   * - 100% solid collision across all steps, risers, walls, floors, railings, and ceilings
+   */
+  private buildTwoStoryDepot(parent: THREE.Group): void {
+    const depotGroup = new THREE.Group();
+    depotGroup.name = 'TwoStoryDepot';
+
+    const depotFacadeMat = InkShaderMaterial.create({ inkColor: new THREE.Color(0x27354a) });
+    const depotTrimMat = InkShaderMaterial.create({ inkColor: new THREE.Color(0x131a28) });
+    const depotInteriorWallMat = InkShaderMaterial.create({ inkColor: new THREE.Color(0x354254) });
+    const darkInkColor = new THREE.Color(0x131a28);
+    const metalInkColor = new THREE.Color(0x0a1435);
+    const glassInkColor = new THREE.Color(0x174052);
+    const slateInkColor = new THREE.Color(0x151c24);
+    const brassInkColor = new THREE.Color(0x5c4218);
+    this.materials.push(depotFacadeMat, depotTrimMat, depotInteriorWallMat);
+
+    // Wall slicer helper: partitions a wall interval [a1, a2] into disjoint rectangular solid boxes around cutouts
+    const computeWallPieces = (
+      a1: number,
+      a2: number,
+      h: number,
+      gaps: Array<[number, number, number, number]>
+    ): Array<[number, number, number, number]> => {
+      const xs = new Set<number>([a1, a2]);
+      for (const g of gaps) {
+        xs.add(Math.min(Math.max(g[0], a1), a2));
+        xs.add(Math.min(Math.max(g[1], a1), a2));
+      }
+      const sorted = [...xs].sort((a, b) => a - b);
+      const runs = new Map<string, [number, number, number, number]>();
+      const out: Array<[number, number, number, number]> = [];
+
+      for (let i = 0; i < sorted.length - 1; i++) {
+        const s1 = sorted[i];
+        const s2 = sorted[i + 1];
+        if (s2 - s1 < 0.005) continue;
+        const mid = (s1 + s2) / 2;
+
+        const cuts = gaps
+          .filter((g) => g[0] <= mid && g[1] >= mid)
+          .map((g) => [g[2] ?? 0, g[3] ?? h])
+          .sort((a, b) => a[0] - b[0]);
+
+        const pieces: Array<[number, number]> = [];
+        let y = 0;
+        for (const [gb, gt] of cuts) {
+          if (gb > y + 0.005) pieces.push([y, gb]);
+          y = Math.max(y, gt);
+        }
+        if (y < h - 0.005) pieces.push([y, h]);
+
+        const keys = new Set<string>();
+        for (const [yb, yt] of pieces) {
+          const k = yb.toFixed(3) + ',' + yt.toFixed(3);
+          keys.add(k);
+          const r = runs.get(k);
+          if (r && Math.abs(r[1] - s1) < 0.005) {
+            r[1] = s2;
+          } else {
+            runs.set(k, [s1, s2, yb, yt]);
+          }
+        }
+        for (const [k, r] of [...runs]) {
+          if (!keys.has(k)) {
+            out.push(r);
+            runs.delete(k);
+          }
+        }
+      }
+      for (const r of runs.values()) out.push(r);
+      return out;
+    };
+
+    // Helper to add a box piece with ink outlines and register solid collision
+    const addBoxPiece = (
+      minX: number, minY: number, minZ: number,
+      maxX: number, maxY: number, maxZ: number,
+      mat: THREE.Material,
+      tag: 'wall' | 'floor' | null = null,
+      customInkColor?: THREE.Color
+    ): THREE.Mesh => {
+      const w = maxX - minX;
+      const h = maxY - minY;
+      const d = maxZ - minZ;
+      const geom = new THREE.BoxGeometry(w, h, d);
+      const mesh = this.addMeshWithEdges(depotGroup, geom, mat, customInkColor ?? InkShaderMaterial.defaultInkColor, true);
+      mesh.position.set((minX + maxX) * 0.5, (minY + maxY) * 0.5, (minZ + maxZ) * 0.5);
+      if (tag) {
+        this.twoStoryColliders.push({ minX, minY, minZ, maxX, maxY, maxZ, tag });
+      }
+      return mesh;
+    };
+
+    // Base geometry constants
+    const bX = 0.0;
+    const bZ = -50.0;
+    const bW = 24.0;
+    const bD = 20.0;
+    const xMin = bX - bW * 0.5; // -12.0
+    const xMax = bX + bW * 0.5; // +12.0
+    const zMin = bZ - bD * 0.5; // -60.0
+    const zMax = bZ + bD * 0.5; // -40.0
+    const groundY = 0.6;
+    const secondFloorY = 5.2;
+    const roofY = 9.8;
+    const parapetY = 11.0;
+    const wallH = roofY - groundY; // 9.2m
+    const wallThick = 0.45;
+    const halfThick = wallThick * 0.5;
+
+    // --- 1. Solid Ground Floor Foundation Slab (y: 0.2 -> 0.6) ---
+    addBoxPiece(xMin, 0.2, zMin, xMax, groundY, zMax, this.sidewalkMat, 'floor');
+
+    // --- 2. Solid Exterior Walls (with open doors & windows) ---
+    // South Facade (z = zMax = -40.0, span x: -12..12, h: 9.2)
+    // Grand entrance double doors: x: -2.5..2.5, y: 0..3.6 (abs y: 0.6..4.2)
+    // Ground windows: [-9.5, -5.5, 1.2, 3.2], [5.5, 9.5, 1.2, 3.2]
+    // 2nd floor windows: [-9.5, -5.5, 5.8, 7.8], [-2.0, 2.0, 5.8, 7.8], [5.5, 9.5, 5.8, 7.8]
+    const southGaps: Array<[number, number, number, number]> = [
+      [-2.5, 2.5, 0.0, 3.6],
+      [-9.5, -5.5, 1.2, 3.2],
+      [5.5, 9.5, 1.2, 3.2],
+      [-9.5, -5.5, 5.8, 7.8],
+      [-2.0, 2.0, 5.8, 7.8],
+      [5.5, 9.5, 5.8, 7.8]
+    ];
+    for (const [a, b, yb, yt] of computeWallPieces(xMin, xMax, wallH, southGaps)) {
+      addBoxPiece(a, groundY + yb, zMax - halfThick, b, groundY + yt, zMax + halfThick, depotFacadeMat, 'wall');
+    }
+
+    // North Facade (z = zMin = -60.0, span x: -12..12, h: 9.2)
+    // Rear colonnade garden doors: x: -2.0..2.0, y: 0..3.2
+    // Windows: [-9.5, -5.5, 1.4, 3.2], [5.5, 9.5, 1.4, 3.2], [-9.5, -5.5, 5.8, 7.8], [5.5, 9.5, 5.8, 7.8]
+    const northGaps: Array<[number, number, number, number]> = [
+      [-2.0, 2.0, 0.0, 3.2],
+      [-9.5, -5.5, 1.4, 3.2],
+      [5.5, 9.5, 1.4, 3.2],
+      [-9.5, -5.5, 5.8, 7.8],
+      [5.5, 9.5, 5.8, 7.8]
+    ];
+    for (const [a, b, yb, yt] of computeWallPieces(xMin, xMax, wallH, northGaps)) {
+      addBoxPiece(a, groundY + yb, zMin - halfThick, b, groundY + yt, zMin + halfThick, depotFacadeMat, 'wall');
+    }
+
+    // West Facade (x = xMin = -12.0, span z: -60..-40, h: 9.2)
+    // Freight delivery door: z: -48.0..-45.0, y: 0..3.0
+    // Windows: [-56.0, -52.0, 1.6, 3.2], [-56.0, -52.0, 5.8, 7.8], [-48.0, -44.0, 5.8, 7.8]
+    const westGaps: Array<[number, number, number, number]> = [
+      [-48.0, -45.0, 0.0, 3.0],
+      [-56.0, -52.0, 1.6, 3.2],
+      [-56.0, -52.0, 5.8, 7.8],
+      [-48.0, -44.0, 5.8, 7.8]
+    ];
+    for (const [a, b, yb, yt] of computeWallPieces(zMin, zMax, wallH, westGaps)) {
+      addBoxPiece(xMin - halfThick, groundY + yb, a, xMin + halfThick, groundY + yt, b, depotFacadeMat, 'wall');
+    }
+
+    // East Facade (x = xMax = 12.0, span z: -60..-40, h: 9.2)
+    // Windows: [-56.0, -52.0, 1.6, 3.2], [-48.0, -44.0, 1.6, 3.2], [-56.0, -52.0, 5.8, 7.8], [-48.0, -44.0, 5.8, 7.8]
+    const eastGaps: Array<[number, number, number, number]> = [
+      [-56.0, -52.0, 1.6, 3.2],
+      [-48.0, -44.0, 1.6, 3.2],
+      [-56.0, -52.0, 5.8, 7.8],
+      [-48.0, -44.0, 5.8, 7.8]
+    ];
+    for (const [a, b, yb, yt] of computeWallPieces(zMin, zMax, wallH, eastGaps)) {
+      addBoxPiece(xMax - halfThick, groundY + yb, a, xMax + halfThick, groundY + yt, b, depotFacadeMat, 'wall');
+    }
+
+    // Window Sills & Mullions
+    const windowFrames: Array<[number, number, number, boolean]> = [
+      // South facade
+      [-7.5, 2.2, zMax + 0.05, false], [7.5, 2.2, zMax + 0.05, false],
+      [-7.5, 6.8, zMax + 0.05, false], [0.0, 6.8, zMax + 0.05, false], [7.5, 6.8, zMax + 0.05, false],
+      // North facade
+      [-7.5, 2.3, zMin - 0.05, false], [7.5, 2.3, zMin - 0.05, false],
+      [-7.5, 6.8, zMin - 0.05, false], [7.5, 6.8, zMin - 0.05, false],
+      // West facade
+      [xMin - 0.05, 2.4, -54.0, true], [xMin - 0.05, 6.8, -54.0, true], [xMin - 0.05, 6.8, -46.0, true],
+      // East facade
+      [xMax + 0.05, 2.4, -54.0, true], [xMax + 0.05, 2.4, -46.0, true],
+      [xMax + 0.05, 6.8, -54.0, true], [xMax + 0.05, 6.8, -46.0, true]
+    ];
+    for (const [fx, fy, fz, isZAxis] of windowFrames) {
+      const sillGeom = new THREE.BoxGeometry(isZAxis ? 0.2 : 4.1, 0.12, isZAxis ? 4.1 : 0.2);
+      const sill = this.addMeshWithEdges(depotGroup, sillGeom, depotTrimMat, darkInkColor, false);
+      sill.position.set(fx, fy - 1.0, fz);
+      const headGeom = new THREE.BoxGeometry(isZAxis ? 0.2 : 4.1, 0.12, isZAxis ? 4.1 : 0.2);
+      const head = this.addMeshWithEdges(depotGroup, headGeom, depotTrimMat, darkInkColor, false);
+      head.position.set(fx, fy + 1.0, fz);
+      const crossGeom = new THREE.BoxGeometry(isZAxis ? 0.1 : 0.08, 1.9, isZAxis ? 0.08 : 0.1);
+      const cross = this.addMeshWithEdges(depotGroup, crossGeom, depotTrimMat, darkInkColor, false);
+      cross.position.set(fx, fy, fz);
+    }
+
+    // Entrance Portico Canopy & Brass Pillars (South Facade)
+    const canopyW = 6.8;
+    const canopyD = 2.6;
+    const canopyGeom = new THREE.BoxGeometry(canopyW, 0.22, canopyD);
+    const canopy = this.addMeshWithEdges(depotGroup, canopyGeom, this.accentMat, InkShaderMaterial.defaultAccentColor, true);
+    canopy.position.set(0, 4.3, zMax + canopyD * 0.5);
+    // Standable top on canopy
+    this.twoStoryColliders.push({
+      minX: -canopyW * 0.5,
+      minY: 4.2,
+      minZ: zMax,
+      maxX: canopyW * 0.5,
+      maxY: 4.45,
+      maxZ: zMax + canopyD,
+      tag: 'floor'
+    });
+    // Two brass entrance pillars supporting the canopy
+    for (const px of [-3.0, 3.0]) {
+      addBoxPiece(px - 0.2, groundY, zMax + canopyD - 0.4, px + 0.2, 4.3, zMax + canopyD, this.trimMat, 'wall');
+    }
+    // Classical pediment above entrance
+    const signGeom = new THREE.BoxGeometry(8.4, 0.95, 0.22);
+    const sign = this.addMeshWithEdges(depotGroup, signGeom, depotTrimMat, darkInkColor, false);
+    sign.position.set(0, 5.05, zMax + 0.25);
+    const signInnerGeom = new THREE.BoxGeometry(8.0, 0.75, 0.24);
+    const signInner = this.addMeshWithEdges(depotGroup, signInnerGeom, this.facadeMat, InkShaderMaterial.defaultInkColor, false);
+    signInner.position.set(0, 5.05, zMax + 0.26);
+
+    // --- 3. Ground Floor Central Atrium: Colonade & Twin Wing Partitions ---
+    // 4 Grand Atrium Pillars (0.9m square) framing the open central atrium
+    const atriumCols: Array<[number, number]> = [
+      [-4.6, -42.0], [-4.6, -55.5], [4.6, -42.0], [4.6, -55.5]
+    ];
+    for (const [cx, cz] of atriumCols) {
+      addBoxPiece(cx - 0.45, groundY, cz - 0.45, cx + 0.45, secondFloorY, cz + 0.45, depotTrimMat, 'wall');
+      const plinthGeom = new THREE.BoxGeometry(1.2, 0.4, 1.2);
+      const plinth = this.addMeshWithEdges(depotGroup, plinthGeom, this.sidewalkMat, InkShaderMaterial.defaultInkColor, false);
+      plinth.position.set(cx, groundY + 0.2, cz);
+    }
+
+    // West Partition Wall (x = -5.0, span z: -60..-40, h: 4.6, from y: 0.6 to 5.2)
+    // Grand archway connecting to West Armory: z: -52.0..-43.0
+    const westPartitionGaps: Array<[number, number, number, number]> = [
+      [-52.0, -43.0, 0.0, 3.8]
+    ];
+    for (const [a, b, yb, yt] of computeWallPieces(zMin, zMax, secondFloorY - groundY, westPartitionGaps)) {
+      addBoxPiece(-5.0 - 0.18, groundY + yb, a, -5.0 + 0.18, groundY + yt, b, depotInteriorWallMat, 'wall');
+    }
+
+    // East Partition Wall (x = +5.0, span z: -60..-40, h: 4.6, from y: 0.6 to 5.2)
+    // Grand archway connecting to East Library: z: -52.0..-43.0
+    const eastPartitionGaps: Array<[number, number, number, number]> = [
+      [-52.0, -43.0, 0.0, 3.8]
+    ];
+    for (const [a, b, yb, yt] of computeWallPieces(zMin, zMax, secondFloorY - groundY, eastPartitionGaps)) {
+      addBoxPiece(5.0 - 0.18, groundY + yb, a, 5.0 + 0.18, groundY + yt, b, depotInteriorWallMat, 'wall');
+    }
+
+    // --- 4. West Wing: Armory & Dispatch Vault Props ---
+    // Security Counter placed cleanly in West Wing (x: -10.0..-7.0, z: -43.0..-41.5, h: 1.1)
+    addBoxPiece(-10.0, groundY, -43.0, -7.0, groundY + 1.1, -41.5, this.trimMat, 'wall');
+    addBoxPiece(-10.1, groundY + 1.0, -43.1, -6.9, groundY + 1.15, -41.4, this.metalMat, 'floor');
+    // Armory Crates & Pallets (fully solid with standable tops)
+    const armoryCrates: Array<[number, number, number, number]> = [
+      [-10.0, groundY, -44.0, 1.6],
+      [-8.2, groundY, -44.2, 1.2],
+      [-9.1, groundY + 1.6, -44.1, 1.1], // stacked crate!
+      [-10.2, groundY, -56.0, 1.5],
+      [-8.5, groundY, -56.2, 1.3]
+    ];
+    for (const [cx, cy, cz, cs] of armoryCrates) {
+      const hs = cs * 0.5;
+      addBoxPiece(cx - hs, cy, cz - hs, cx + hs, cy + cs, cz + hs, this.woodMat, 'wall');
+      addBoxPiece(cx - hs, cy + cs - 0.15, cz - hs, cx + hs, cy + cs, cz + hs, this.woodMat, 'floor');
+    }
+
+    // --- 5. East Wing: Archive & Cartography Library Props ---
+    // Oak Reading / Map Tables
+    addBoxPiece(7.2, groundY, -46.0, 10.2, groundY + 0.85, -43.5, this.woodMat, 'wall');
+    addBoxPiece(7.1, groundY + 0.8, -46.1, 10.3, groundY + 0.9, -43.4, this.trimMat, 'floor');
+    addBoxPiece(7.2, groundY, -54.0, 10.2, groundY + 0.85, -51.5, this.woodMat, 'wall');
+    addBoxPiece(7.1, groundY + 0.8, -54.1, 10.3, groundY + 0.9, -51.4, this.trimMat, 'floor');
+    // Tall Bookshelves along East wall
+    for (const bz of [-47.0, -53.0]) {
+      addBoxPiece(11.2, groundY, bz - 1.8, 11.8, groundY + 3.8, bz + 1.8, this.woodMat, 'wall');
+      addBoxPiece(11.1, groundY + 3.7, bz - 1.8, 11.8, groundY + 3.8, bz + 1.8, this.trimMat, 'floor');
+    }
+
+    // --- 6. Grand Central Staircase (Ground -> 2nd Floor Mezzanine) ---
+    // Center staircase: x: -2.5..2.5 (width 5.0m).
+    // Ascends from front z = -48.0 (y = 0.6) to rear z = -56.0 (y = 5.2). Length = 8.0m.
+    const stair1Steps = 14;
+    const stair1Rise = (secondFloorY - groundY) / stair1Steps; // 4.6 / 14 = 0.328m
+    const stair1Run = 8.0 / stair1Steps; // 8.0 / 14 = 0.571m
+    const stair1X1 = -2.5;
+    const stair1X2 = 2.5;
+    const stair1W = stair1X2 - stair1X1;
+
+    for (let i = 0; i < stair1Steps; i++) {
+      const stepZStart = -48.0 - i * stair1Run;
+      const stepZEnd = -48.0 - (i + 1) * stair1Run;
+      const stepZMid = (stepZStart + stepZEnd) * 0.5;
+      const stepTopY = groundY + (i + 1) * stair1Rise;
+      const stepBaseY = groundY + i * stair1Rise;
+
+      // 1. Visual step mesh
+      const stepGeom = new THREE.BoxGeometry(stair1W, (i + 1) * stair1Rise, stair1Run);
+      const stepMesh = this.addMeshWithEdges(depotGroup, stepGeom, this.woodMat, InkShaderMaterial.defaultInkColor, true);
+      stepMesh.position.set(0, groundY + ((i + 1) * stair1Rise) * 0.5, stepZMid);
+
+      // 2. Step floor collider (standable tread)
+      this.twoStoryColliders.push({
+        minX: stair1X1,
+        minY: stepTopY - 0.2,
+        minZ: stepZEnd,
+        maxX: stair1X2,
+        maxY: stepTopY,
+        maxZ: stepZStart,
+        tag: 'floor'
+      });
+
+      // Balustrade posts on left (x = -2.5) and right (x = 2.5) every 3 steps
+      if (i % 3 === 0 || i === stair1Steps - 1) {
+        for (const sideX of [stair1X1, stair1X2]) {
+          const postGeom = new THREE.BoxGeometry(0.12, 0.95, 0.12);
+          const post = this.addMeshWithEdges(depotGroup, postGeom, this.metalMat, brassInkColor, false);
+          post.position.set(sideX, stepTopY + 0.475, stepZMid);
+        }
+      }
+    }
+
+    // Solid back wall under the stairs enclosing the ground-floor under-stair volume
+    addBoxPiece(stair1X1, groundY, -56.15, stair1X2, 4.8, -56.0, depotInteriorWallMat, 'wall');
+
+    // Solid side balustrade walls along left and right of Grand Staircase (prevents falling off side)
+    addBoxPiece(stair1X1 - 0.1, groundY, -55.6, stair1X1 + 0.05, secondFloorY + 1.1, -48.0, this.metalMat, 'wall');
+    addBoxPiece(stair1X2 - 0.05, groundY, -55.6, stair1X2 + 0.1, secondFloorY + 1.1, -48.0, this.metalMat, 'wall');
+
+    // Continuous handrail tubes on both sides
+    for (const sideX of [stair1X1, stair1X2]) {
+      const railGeom = new THREE.BoxGeometry(0.12, 0.12, 8.2);
+      railGeom.rotateX(-Math.atan2(secondFloorY - groundY, 8.0));
+      const railMesh = this.addMeshWithEdges(depotGroup, railGeom, this.trimMat, brassInkColor, false);
+      railMesh.position.set(sideX, (groundY + secondFloorY) * 0.5 + 0.95, -52.0);
+    }
+
+    // --- 7. Second Floor Mezzanine Promenade (y = 5.2, slab thickness 0.4, y: 4.8..5.2) ---
+    // Wraparound layout around the central open atrium void (void is x: -5.0..5.0, z: -55.5..-43.0)
+    // Slabs:
+    // 1) South walkway (front facade): x: -11.8..11.8, z: -43.0..-40.2
+    addBoxPiece(-11.8, 4.8, -43.0, 11.8, secondFloorY, -40.2, this.sidewalkMat, 'floor');
+    // 2) North promenade (landing of grand stair): x: -11.8..11.8, z: -59.8..-55.5
+    addBoxPiece(-11.8, 4.8, -59.8, 11.8, secondFloorY, -55.5, this.sidewalkMat, 'floor');
+    // 3) West gallery: x: -11.8..-5.0, z: -55.5..-43.0
+    addBoxPiece(-11.8, 4.8, -55.5, -5.0, secondFloorY, -43.0, this.sidewalkMat, 'floor');
+    // 4) East gallery (front part): x: 5.0..11.8, z: -52.0..-43.0
+    addBoxPiece(5.0, 4.8, -52.0, 11.8, secondFloorY, -43.0, this.sidewalkMat, 'floor');
+    // 5) East gallery (inner strip beside NE stair): x: 5.0..8.5, z: -57.6..-52.0
+    addBoxPiece(5.0, 4.8, -57.6, 8.5, secondFloorY, -52.0, this.sidewalkMat, 'floor');
+    // (Notice: NE stair hole x: 8.5..11.8, z: -57.6..-52.0 is left open for the roof staircase!)
+
+    // Solid Mezzanine Balustrades (1.1m high solid walls overlooking central atrium void)
+    // Along West edge of void: x = -5.0, z: -55.5..-43.0
+    addBoxPiece(-5.1, secondFloorY, -55.5, -4.9, secondFloorY + 1.1, -43.0, this.metalMat, 'wall');
+    // Along East edge of void: x = +5.0, z: -55.5..-43.0
+    addBoxPiece(4.9, secondFloorY, -55.5, 5.1, secondFloorY + 1.1, -43.0, this.metalMat, 'wall');
+    // Along South edge of void: z = -43.0, x: -5.0..+5.0
+    addBoxPiece(-5.0, secondFloorY, -43.1, 5.0, secondFloorY + 1.1, -42.9, this.metalMat, 'wall');
+
+    // Visual handrail capping on mezzanine balustrades
+    const capSGeom = new THREE.BoxGeometry(10.2, 0.08, 0.22);
+    const capS = this.addMeshWithEdges(depotGroup, capSGeom, this.trimMat, brassInkColor, false);
+    capS.position.set(0, secondFloorY + 1.1, -43.0);
+    const capLRGeom = new THREE.BoxGeometry(0.22, 0.08, 12.6);
+    const capL = this.addMeshWithEdges(depotGroup, capLRGeom, this.trimMat, brassInkColor, false);
+    capL.position.set(-5.0, secondFloorY + 1.1, -49.25);
+    const capR = this.addMeshWithEdges(depotGroup, capLRGeom, this.trimMat, brassInkColor, false);
+    capR.position.set(5.0, secondFloorY + 1.1, -49.25);
+
+    // --- 8. Second Floor NW Executive Map Room ---
+    // Partition wall along z = -52.0 (x: -11.8..-5.0, h: 4.6, from y: 5.2 to 9.8)
+    // Office door: x: -8.5..-6.5, h: 3.2
+    const nwRoomGaps: Array<[number, number, number, number]> = [
+      [-8.5, -6.5, 0.0, 3.2]
+    ];
+    for (const [a, b, yb, yt] of computeWallPieces(-11.8, -5.0, roofY - secondFloorY, nwRoomGaps)) {
+      addBoxPiece(a, secondFloorY + yb, -52.0 - 0.15, b, secondFloorY + yt, -52.0 + 0.15, depotInteriorWallMat, 'wall');
+    }
+    // Executive Drafting Table in NW Map Room
+    addBoxPiece(-10.5, secondFloorY, -56.0, -8.0, secondFloorY + 1.05, -54.0, this.woodMat, 'wall');
+    addBoxPiece(-10.6, secondFloorY + 1.0, -56.1, -7.9, secondFloorY + 1.15, -53.9, this.trimMat, 'floor');
+    // Map Board on North wall
+    const mapBoardGeom = new THREE.BoxGeometry(4.0, 1.8, 0.1);
+    const mapBoard = this.addMeshWithEdges(depotGroup, mapBoardGeom, this.trimMat, darkInkColor, false);
+    mapBoard.position.set(-8.5, 7.6, zMin + 0.25);
+    const mapBoardInnerGeom = new THREE.BoxGeometry(3.8, 1.6, 0.12);
+    const mapBoardInner = this.addMeshWithEdges(depotGroup, mapBoardInnerGeom, this.facadeMat, slateInkColor, false);
+    mapBoardInner.position.set(-8.5, 7.6, zMin + 0.26);
+
+    // --- 9. NE Corner Staircase (2nd Floor -> Rooftop Lantern Cupola) ---
+    // Ascends from z = -52.0 (y = 5.2) to z = -57.6 (y = 9.8) along x: 8.5..11.5 (width 3.0m)
+    const stair2Steps = 14;
+    const stair2Rise = (roofY - secondFloorY) / stair2Steps; // 4.6 / 14 = 0.328m
+    const stair2Run = 5.6 / stair2Steps; // 5.6 / 14 = 0.400m
+    const stair2X1 = 8.5;
+    const stair2X2 = 11.5;
+    const stair2W = stair2X2 - stair2X1;
+
+    for (let i = 0; i < stair2Steps; i++) {
+      const stepZStart = -52.0 - i * stair2Run;
+      const stepZEnd = -52.0 - (i + 1) * stair2Run;
+      const stepZMid = (stepZStart + stepZEnd) * 0.5;
+      const stepTopY = secondFloorY + (i + 1) * stair2Rise;
+      const stepBaseY = secondFloorY + i * stair2Rise;
+
+      // 1. Visual step mesh
+      const stepGeom = new THREE.BoxGeometry(stair2W, (i + 1) * stair2Rise, stair2Run);
+      const stepMesh = this.addMeshWithEdges(depotGroup, stepGeom, this.woodMat, InkShaderMaterial.defaultInkColor, true);
+      stepMesh.position.set((stair2X1 + stair2X2) * 0.5, secondFloorY + ((i + 1) * stair2Rise) * 0.5, stepZMid);
+
+      // 2. Step floor collider
+      this.twoStoryColliders.push({
+        minX: stair2X1,
+        minY: stepTopY - 0.2,
+        minZ: stepZEnd,
+        maxX: stair2X2,
+        maxY: stepTopY,
+        maxZ: stepZStart,
+        tag: 'floor'
+      });
+
+    }
+
+    // Solid back wall under the NE roof stairs (from 2nd floor up to roof slab underside at 9.4m)
+    addBoxPiece(stair2X1, secondFloorY, -57.75, stair2X2, 9.4, -57.6, depotInteriorWallMat, 'wall');
+
+    // Inner balustrade wall along inner side (x = 8.5) of NE Staircase along 2nd floor gallery
+    addBoxPiece(8.4, secondFloorY, -56.0, 8.55, secondFloorY + 1.1, -52.0, this.metalMat, 'wall');
+
+    // --- 10. Solid Rooftop Slab & Perimeter Parapets (Roof level at y = 9.8) ---
+    // Skylight opening: x: -4.5..4.5, z: -51.0..-44.0
+    // Cupola stairwell opening: x: 8.0..11.8, z: -59.5..-55.5
+    // Roof Slabs (thickness 0.4m, y: 9.4..9.8):
+    // 1) South roof deck: x: -12.0..12.0, z: -44.0..-40.0
+    addBoxPiece(xMin, 9.4, -44.0, xMax, roofY, zMax, this.roofMat, 'floor');
+    // 2) North roof deck (west of cupola): x: -12.0..8.0, z: -60.0..-51.0
+    addBoxPiece(xMin, 9.4, zMin, 8.0, roofY, -51.0, this.roofMat, 'floor');
+    // 3) West roof flank: x: -12.0..-4.5, z: -51.0..-44.0
+    addBoxPiece(xMin, 9.4, -51.0, -4.5, roofY, -44.0, this.roofMat, 'floor');
+    // 4) East roof flank: x: 4.5..12.0, z: -51.0..-44.0
+    addBoxPiece(4.5, 9.4, -51.0, xMax, roofY, -44.0, this.roofMat, 'floor');
+
+    // Solid Perimeter Roof Parapet Walls (y: 9.8..11.0, h: 1.2m, thickness 0.4m)
+    addBoxPiece(xMin, roofY, zMax - 0.4, xMax, parapetY, zMax, depotTrimMat, 'wall'); // South
+    addBoxPiece(xMin, roofY, zMin, xMax, parapetY, zMin + 0.4, depotTrimMat, 'wall'); // North
+    addBoxPiece(xMin, roofY, zMin, xMin + 0.4, parapetY, zMax, depotTrimMat, 'wall'); // West
+    addBoxPiece(xMax - 0.4, roofY, zMin, xMax, parapetY, zMax, depotTrimMat, 'wall'); // East
+
+    // Landable Coping Trim on Parapet Top
+    const copingW = new THREE.BoxGeometry(bW + 0.4, 0.14, 0.55);
+    const sCoping = this.addMeshWithEdges(depotGroup, copingW, this.landableTrimMat, LANDABLE_TRIM, false);
+    sCoping.position.set(0, parapetY + 0.07, zMax);
+    const nCoping = this.addMeshWithEdges(depotGroup, copingW, this.landableTrimMat, LANDABLE_TRIM, false);
+    nCoping.position.set(0, parapetY + 0.07, zMin);
+    const copingD = new THREE.BoxGeometry(0.55, 0.14, bD + 0.4);
+    const wCoping = this.addMeshWithEdges(depotGroup, copingD, this.landableTrimMat, LANDABLE_TRIM, false);
+    wCoping.position.set(xMin, parapetY + 0.07, bZ);
+    const eCoping = this.addMeshWithEdges(depotGroup, copingD, this.landableTrimMat, LANDABLE_TRIM, false);
+    eCoping.position.set(xMax, parapetY + 0.07, bZ);
+
+    // --- 11. Central Raised Glass Lantern Skylight (x: -4.5..4.5, z: -51.0..-44.0) ---
+    // Raised clerestory base curb (h = 0.6m, y: 9.8..10.4)
+    addBoxPiece(-4.5, roofY, -51.0, 4.5, roofY + 0.6, -50.6, this.metalMat, 'wall');
+    addBoxPiece(-4.5, roofY, -44.4, 4.5, roofY + 0.6, -44.0, this.metalMat, 'wall');
+    addBoxPiece(-4.5, roofY, -51.0, -4.1, roofY + 0.6, -44.0, this.metalMat, 'wall');
+    addBoxPiece(4.1, roofY, -51.0, 4.5, roofY + 0.6, -44.0, this.metalMat, 'wall');
+    // Pitched glass hip roof
+    const lanternRoofGeom = new THREE.BoxGeometry(8.6, 0.8, 6.6);
+    lanternRoofGeom.rotateZ(Math.PI / 16);
+    const lanternRoof = this.addMeshWithEdges(depotGroup, lanternRoofGeom, this.accentMat, glassInkColor, false);
+    lanternRoof.position.set(0, roofY + 1.0, -47.5);
+    // Standable glass top collider
+    this.twoStoryColliders.push({
+      minX: -4.3,
+      minY: roofY + 0.9,
+      minZ: -50.8,
+      maxX: 4.3,
+      maxY: roofY + 1.1,
+      maxZ: -44.2,
+      tag: 'floor'
+    });
+
+    // --- 12. NE Rooftop Lantern Cupola (x: 8.0..12.0, z: -59.5..-51.8, y: 9.8..12.8) ---
+    // Cupola enclosure walls (West wall has open door facing roof: z: -58.5..-56.0, h: 2.2)
+    addBoxPiece(7.8, roofY, -59.5, 8.2, 12.8, -58.5, depotTrimMat, 'wall'); // West door rear
+    addBoxPiece(7.8, roofY + 2.2, -58.5, 8.2, 12.8, -56.0, depotTrimMat, 'wall'); // West door lintel
+    addBoxPiece(7.8, roofY, -56.0, 8.2, 12.8, -51.8, depotTrimMat, 'wall'); // West wall south of door
+    addBoxPiece(8.0, 12.0, -52.0, 12.0, 12.8, -51.6, depotTrimMat, 'wall'); // South high lintel arch
+    addBoxPiece(8.0, roofY, -59.7, 12.0, 12.8, -59.3, depotTrimMat, 'wall'); // North wall
+    // Cupola domed roof
+    const cupolaDomeGeom = new THREE.ConeGeometry(2.6, 1.4, 8);
+    const cupolaDome = this.addMeshWithEdges(depotGroup, cupolaDomeGeom, this.roofMat, darkInkColor, true);
+    cupolaDome.position.set(10.0, 13.5, -55.75);
+    // Standable cupola roof slab
+    addBoxPiece(7.8, 12.6, -59.7, 12.2, 12.8, -51.8, this.roofMat, 'floor');
+
+    // --- 13. SW Industrial Water Tower (x = -8.0, z = -44.0) ---
+    const tankR = 1.9;
+    const tankLegH = 2.4;
+    const tankDeckY = roofY + tankLegH;
+    const tankBodyH = 2.8;
+    const tankTopY = tankDeckY + tankBodyH;
+    for (const dx of [-1.35, 1.35]) {
+      for (const dz of [-1.35, 1.35]) {
+        const legGeom = new THREE.BoxGeometry(0.22, tankLegH, 0.22);
+        const leg = this.addMeshWithEdges(depotGroup, legGeom, this.metalMat, metalInkColor, false);
+        leg.position.set(-8.0 + dx, roofY + tankLegH * 0.5, -44.0 + dz);
+      }
+    }
+    const deckGeom = new THREE.BoxGeometry(3.8, 0.25, 3.8);
+    const deck = this.addMeshWithEdges(depotGroup, deckGeom, this.woodMat, InkShaderMaterial.defaultInkColor, false);
+    deck.position.set(-8.0, tankDeckY + 0.125, -44.0);
+    const tankGeom = new THREE.CylinderGeometry(tankR, tankR, tankBodyH, 12);
+    const tankMesh = this.addMeshWithEdges(depotGroup, tankGeom, this.woodMat, InkShaderMaterial.defaultInkColor, true);
+    tankMesh.position.set(-8.0, tankDeckY + tankBodyH * 0.5, -44.0);
+    const capGeom = new THREE.ConeGeometry(tankR * 1.1, 1.0, 12);
+    const capMesh = this.addMeshWithEdges(depotGroup, capGeom, depotTrimMat, darkInkColor, false);
+    capMesh.position.set(-8.0, tankTopY + 0.5, -44.0);
+
+    // Water tank solid colliders
+    this.twoStoryColliders.push({
+      minX: -8.0 - tankR,
+      minY: tankDeckY,
+      minZ: -44.0 - tankR,
+      maxX: -8.0 + tankR,
+      maxY: tankTopY,
+      maxZ: -44.0 + tankR,
+      tag: 'wall'
+    });
+    this.twoStoryColliders.push({
+      minX: -8.0 - 1.9,
+      minY: tankDeckY,
+      minZ: -44.0 - 1.9,
+      maxX: -8.0 + 1.9,
+      maxY: tankDeckY + 0.25,
+      maxZ: -44.0 + 1.9,
+      tag: 'floor'
+    });
+    this.twoStoryColliders.push({
+      minX: -8.0 - tankR,
+      minY: tankTopY - 0.2,
+      minZ: -44.0 - tankR,
+      maxX: -8.0 + tankR,
+      maxY: tankTopY,
+      maxZ: -44.0 + tankR,
+      tag: 'floor'
+    });
+
+    // NW Industrial HVAC Ventilation Plant (x = -8.0, z = -56.0, h = 1.4)
+    addBoxPiece(-9.5, roofY, -57.5, -6.5, roofY + 1.4, -54.5, this.metalMat, 'wall');
+    addBoxPiece(-9.5, roofY + 1.25, -57.5, -6.5, roofY + 1.4, -54.5, this.trimMat, 'floor');
+
+    // Web Grapple Anchors across the Grand Depot
+    const depotAnchors: THREE.Vector3[] = [
+      new THREE.Vector3(xMin, parapetY, zMax),
+      new THREE.Vector3(xMax, parapetY, zMax),
+      new THREE.Vector3(xMin, parapetY, zMin),
+      new THREE.Vector3(xMax, parapetY, zMin),
+      new THREE.Vector3(0.0, roofY + 1.5, -47.5),
+      new THREE.Vector3(-8.0, tankTopY + 1.0, -44.0),
+      new THREE.Vector3(10.0, 14.5, -57.25)
+    ];
+    this.webAnchors.push(...depotAnchors);
+
+    parent.add(depotGroup);
   }
 
   /**

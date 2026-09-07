@@ -37,6 +37,15 @@ export class Sniper extends BaseWeapon {
   public readonly reloadTime = 2.2;
   public readonly flavorText = 'precision blueprint rifle · 3.5x optical scope · press Q to zoom';
 
+  // Tactile shooting feel: massive high-caliber blast, violent screen jolt, fat beam
+  public override camKick: [number, number] = [0.075, 0.014];
+  public override fovKick: number = 5.0;
+  public override shakeAmount: number = 0.16;
+  public override tracerThickness: number = 0.08;
+  public override tracerColor: THREE.Color = new THREE.Color(0xff4757);
+  public override flashScale: number = 1.8;
+  public override flashColorHex: number = 0xee5253;
+
   public isScoped: boolean = false;
 
   constructor() {
@@ -189,6 +198,7 @@ export class Sniper extends BaseWeapon {
     // Muzzle socket at brake tip
     this.muzzleTip.position.set(0, 0.045, -1.02);
     this.modelGroup.add(this.muzzleTip);
+    this.initMuzzleFlash();
 
     this.modelGroup.scale.set(1.05, 1.05, 1.05);
   }

@@ -105,19 +105,22 @@ export class SwingPhysics {
   public playerHeight: number = 1.8;
   public playerRadius: number = 0.6;
 
-  // Human locomotion (m/s). Web-swinging is the fast layer, not feet.
-  public walkSpeed: number = 5.0;
-  public sprintMultiplier: number = 1.6; // Shift on ground: 8 m/s sprint
-  public crouchSpeed: number = 2.2; // C on ground: sit/crouch shuffle
+  // Human locomotion (m/s) tuned from inspiration (inspiration/src/player.js):
+  // WALK = 6.6, SPRINT = 10.6, CROUCH = 3.6, ACCEL = 140, FRICTION = 8, AIR_ACCEL = 36, AIR_CAP = 7.5, JUMP = 9.6
+  public walkSpeed: number = 6.6;
+  public sprintMultiplier: number = 10.6 / 6.6; // 10.6 m/s sprint
+  public crouchSpeed: number = 3.6; // 3.6 m/s crouch shuffle
   public crouching: boolean = false; // set per-frame by Player
   public standHeight: number = 1.8;
   public crouchHeight: number = 1.2;
-  public groundAccelRate: number = 7.0;
-  public groundFriction: number = 10.0;
-  public airControlAccel: number = 6.5;
-  public airBrakeDecel: number = 16.0;
-  public jumpSpeed: number = 8.8;
+  public groundAccelRate: number = 140.0; // Quake-style crisp responsive ground accel (m/s^2)
+  public groundFriction: number = 8.0; // Clean deceleration
+  public airControlAccel: number = 36.0; // Responsive air steering (m/s^2)
+  public airCap: number = 7.5; // Pure air steering cap (does not cap web swing momentum)
+  public airBrakeDecel: number = 20.0;
+  public jumpSpeed: number = 9.6;
   public wallRunSpeed: number = 9.0;
+  public landGraceTimer: number = 0; // 0.4s reduced friction on landing to preserve high-speed momentum
 
   // ADS move-slow multiplier (set per-frame by Player, 1 = full speed)
   public speedMultiplier: number = 1.0;
@@ -331,22 +334,36 @@ export class SwingPhysics {
     this.swingTime += dt;
 
     // 0. Winch: powered pull straight to the anchor, ignoring the pendulum.
-    // Arrival pops the line with a small upward vault.
+    // Ease-out over the last 8m so arrival doesn't slam the wall at full speed,
+    // then pop the line into a forward+up vault. (Keeping the raw into-wall
+    // velocity used to insta-die on wall push-out, sticking the player to the
+    // face and dropping them straight down — the "flash to the bottom".)
     if (this.winching) {
       const toAnchor = this._tempVecA.subVectors(this.webAnchor, this.position);
       const dist = toAnchor.length();
       if (dist < this.winchArriveDist) {
+        const incoming = this.velocity.length();
+        const incomingUp = Math.max(this.velocity.y, 0);
+        const flat = this._tempVecC.set(lookDir.x, 0, lookDir.z);
+        if (flat.lengthSq() < 1e-4) {
+          flat.set(this.velocity.x, 0, this.velocity.z);
+          if (flat.lengthSq() < 1e-4) flat.set(0, 0, -1);
+        }
+        flat.normalize();
+        this.velocity.copy(flat).multiplyScalar(THREE.MathUtils.clamp(incoming * 0.45, 8.0, 15.0));
+        this.velocity.y = THREE.MathUtils.clamp(incomingUp * 0.35 + 5.0, 6.0, 11.0);
         this.mode = MovementMode.AIR;
         this.webAnchor = null;
         this.webAnchorNormal = null;
         this.isWebTaut = false;
         this.slackTimer = 0;
         this.winching = false;
-        this.velocity.y = Math.max(this.velocity.y, 3.0);
         return;
       }
       toAnchor.normalize();
-      const speed = Math.max(this.velocity.length(), this.winchSpeed);
+      const easeT = THREE.MathUtils.clamp((dist - this.winchArriveDist) / 8.0, 0, 1);
+      const fullSpeed = Math.max(this.velocity.length(), this.winchSpeed);
+      const speed = THREE.MathUtils.lerp(9.0, fullSpeed, easeT);
       this.velocity.copy(toAnchor).multiplyScalar(speed);
       return;
     }
@@ -468,6 +485,12 @@ export class SwingPhysics {
    * Wall run along vertical skyscraper surfaces
    */
   private updateWallRun(dt: number, inputDir: THREE.Vector3, lookDir: THREE.Vector3): void {
+    // If player stops moving forward or releases keys, immediately detach (never run on its own!)
+    if (inputDir.lengthSq() < 0.01) {
+      this.detachFromWall();
+      return;
+    }
+
     this.wallRunTimer += dt;
 
     if (this.wallRunTimer > this.maxWallRunTime) {
@@ -538,7 +561,16 @@ export class SwingPhysics {
         this.velocity.z *= factor;
       }
     } else if (inputDir.lengthSq() > 0.01) {
-      this.velocity.addScaledVector(inputDir, baseAirAccel * dt);
+      // Responsive air steering from inspiration (AIR_ACCEL = 36, AIR_CAP = 7.5)
+      const wishLen = Math.min(1.0, inputDir.length());
+      const wishX = inputDir.x / (wishLen || 1);
+      const wishZ = inputDir.z / (wishLen || 1);
+      const cur = this.velocity.x * wishX + this.velocity.z * wishZ;
+      const add = Math.min(this.airCap * wishLen - cur, baseAirAccel * dt);
+      if (add > 0) {
+        this.velocity.x += wishX * add;
+        this.velocity.z += wishZ * add;
+      }
     }
 
     // Dive: holding Ctrl in air adds downward speed + forward assist
@@ -558,22 +590,45 @@ export class SwingPhysics {
   }
 
   /**
-   * Ground movement: brisk human walk. Snappy but capped — speed comes from webs.
+   * Ground movement: Quake/Source-style responsive locomotion from inspiration (inspiration/src/player.js).
+   * Snappy acceleration (140 m/s^2), clean ground friction (8.0), land grace for preserving swing momentum,
+   * and clean zero-velocity clamping when stopping (no micro-drift or moving on its own).
    */
   private updateGrounded(dt: number, inputDir: THREE.Vector3): void {
-    // With input: drive toward walk speed. Without: friction stops you.
-    // (Friction never fights the drive — that capped speed at 44% of target.)
+    // Land grace timer decay (reduced friction after landing from high-speed swing)
+    if (this.landGraceTimer > 0) {
+      this.landGraceTimer = Math.max(0, this.landGraceTimer - dt);
+    }
+
+    const accelDamp = this.controlDampTimer > 0 ? 0.5 : 1.0;
+    const fr = this.groundFriction * (this.landGraceTimer > 0 ? 0.25 : 1.0);
+    const sp = Math.hypot(this.velocity.x, this.velocity.z);
+
+    // 1. Friction applies to current horizontal velocity
+    if (sp > 0) {
+      const drop = sp * fr * dt;
+      const ns = Math.max(0, sp - drop) / sp;
+      this.velocity.x *= ns;
+      this.velocity.z *= ns;
+      // If speed dropped below stop threshold and no movement input, clamp to exact 0
+      if (sp < 0.05 && inputDir.lengthSq() <= 0.01) {
+        this.velocity.x = 0;
+        this.velocity.z = 0;
+      }
+    }
+
+    // 2. Wish acceleration along input direction (inspiration line 155)
     if (inputDir.lengthSq() > 0.01) {
-      const accelDamp = this.controlDampTimer > 0 ? 0.5 : 1.0;
-      const target = this.crouching ? this.crouchSpeed : this.walkSpeed * this.speedMultiplier;
-      const targetVel = this._tempVecB.copy(inputDir).normalize().multiplyScalar(target);
-      const rate = Math.min(1, this.groundAccelRate * accelDamp * dt);
-      this.velocity.x += (targetVel.x - this.velocity.x) * rate;
-      this.velocity.z += (targetVel.z - this.velocity.z) * rate;
-    } else {
-      const f = Math.max(0, 1 - this.groundFriction * dt);
-      this.velocity.x *= f;
-      this.velocity.z *= f;
+      const wishLen = Math.min(1.0, inputDir.length());
+      const wishX = inputDir.x / (wishLen || 1);
+      const wishZ = inputDir.z / (wishLen || 1);
+      const maxSpeed = (this.crouching ? this.crouchSpeed : this.walkSpeed * this.speedMultiplier) * wishLen;
+      const cur = this.velocity.x * wishX + this.velocity.z * wishZ;
+      const add = Math.min(maxSpeed - cur, this.groundAccelRate * accelDamp * dt);
+      if (add > 0) {
+        this.velocity.x += wishX * add;
+        this.velocity.z += wishZ * add;
+      }
     }
 
     this.velocity.y = 0;
@@ -608,6 +663,7 @@ export class SwingPhysics {
     this.slackTimer = 0;
     this.winching = false;
     this.controlDampTimer = 0;
+    this.landGraceTimer = 0;
   }
 
   /**

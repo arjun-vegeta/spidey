@@ -3,39 +3,298 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
-  <title>Spider-Man // Hand-Drawn Blueprint Ink FPS</title>
+  <title>Spidey Shoot // Hand-Drawn Blueprint Ink FPS</title>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Courier+Prime:ital,wght@0,400;0,700;1,400&family=Special+Elite&display=swap" rel="stylesheet" />
   <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🕷️</text></svg>">
+  <link rel="stylesheet" href="/src/ui/hud.css" />
+  <style>
+    /* Instant Zero-FOUC Paint Rules */
+    html, body {
+      margin: 0;
+      padding: 0;
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      background-color: #f5eedd;
+      font-family: 'Special Elite', 'Courier Prime', 'Noteworthy', monospace;
+      color: #152778;
+    }
+
+    #instructions-modal.loading-hidden {
+      display: none !important;
+    }
+
+    #loading-screen {
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100vw;
+      height: 100vh;
+      z-index: 10000;
+      background-color: #f5eedd;
+      background-image: linear-gradient(to bottom, rgba(122, 150, 212, 0.28) 1px, transparent 1px);
+      background-size: 100% 28px;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      overflow: hidden;
+      opacity: 1;
+      transition: opacity 0.45s cubic-bezier(0.4, 0, 0.2, 1), transform 0.45s cubic-bezier(0.4, 0, 0.2, 1);
+    }
+  </style>
 </head>
 <body>
+  <!-- Notebook Doodle Loading Page (Zero-FOUC + Blueprint Doodle Theme) -->
+  <div id="loading-screen">
+    <!-- Red Notebook Margin -->
+    <div class="doodle-notebook-margin"></div>
+
+    <!-- Notebook Binder Punch Holes -->
+    <div class="doodle-binder-holes">
+      <div class="doodle-hole"></div>
+      <div class="doodle-hole"></div>
+      <div class="doodle-hole"></div>
+      <div class="doodle-hole"></div>
+    </div>
+
+    <!-- Paper Texture Overlay -->
+    <div class="loading-paper-texture"></div>
+
+    <!-- Corner Spiderweb Doodles -->
+    <svg class="doodle-corner-web-tl" viewBox="0 0 120 120" fill="none" xmlns="http://www.w3.org/2000/svg">
+      <path d="M0 0 L120 20 M0 0 L100 60 M0 0 L60 100 M0 0 L20 120" stroke="#152778" stroke-width="1.5" stroke-linecap="round"/>
+      <path d="M30 5 Q25 15 5 30" stroke="#152778" stroke-width="1.5" stroke-linecap="round"/>
+      <path d="M60 10 Q50 30 10 60" stroke="#152778" stroke-width="1.5" stroke-linecap="round"/>
+      <path d="M90 15 Q75 45 15 90" stroke="#152778" stroke-width="1.5" stroke-linecap="round"/>
+      <path d="M115 19 Q95 57 19 115" stroke="#152778" stroke-width="1.5" stroke-linecap="round"/>
+      <circle cx="95" cy="48" r="1.5" fill="#152778"/>
+      <circle cx="50" cy="22" r="1.5" fill="#152778"/>
+    </svg>
+
+    <svg class="doodle-corner-web-tr" viewBox="0 0 120 120" fill="none" xmlns="http://www.w3.org/2000/svg">
+      <path d="M120 0 L0 20 M120 0 L20 60 M120 0 L60 100 M120 0 L100 120" stroke="#152778" stroke-width="1.5" stroke-linecap="round"/>
+      <path d="M90 5 Q95 15 115 30" stroke="#152778" stroke-width="1.5" stroke-linecap="round"/>
+      <path d="M60 10 Q70 30 110 60" stroke="#152778" stroke-width="1.5" stroke-linecap="round"/>
+      <path d="M30 15 Q45 45 105 90" stroke="#152778" stroke-width="1.5" stroke-linecap="round"/>
+      <path d="M5 19 Q25 57 101 115" stroke="#152778" stroke-width="1.5" stroke-linecap="round"/>
+      <path d="M35 85 L37 91 L43 93 L37 95 L35 101 L33 95 L27 93 L33 91 Z" fill="#d63031" opacity="0.7"/>
+    </svg>
+
+    <!-- Bottom Corner Doodles -->
+    <svg class="doodle-skyline-bl" viewBox="0 0 140 80" fill="none" xmlns="http://www.w3.org/2000/svg">
+      <rect x="10" y="25" width="28" height="55" stroke="#152778" stroke-width="1.5" stroke-dasharray="4 2"/>
+      <line x1="24" y1="25" x2="24" y2="10" stroke="#152778" stroke-width="1.5"/>
+      <rect x="44" y="15" width="34" height="65" stroke="#152778" stroke-width="1.8"/>
+      <line x1="50" y1="25" x2="72" y2="25" stroke="#152778" stroke-width="1.2" stroke-dasharray="2 2"/>
+      <line x1="50" y1="35" x2="72" y2="35" stroke="#152778" stroke-width="1.2" stroke-dasharray="2 2"/>
+      <line x1="50" y1="45" x2="72" y2="45" stroke="#152778" stroke-width="1.2" stroke-dasharray="2 2"/>
+      <rect x="84" y="35" width="26" height="45" stroke="#152778" stroke-width="1.5" stroke-dasharray="3 3"/>
+    </svg>
+
+    <svg class="doodle-pen-br" viewBox="0 0 130 60" fill="none" xmlns="http://www.w3.org/2000/svg">
+      <g transform="rotate(-18 65 30)">
+        <rect x="25" y="26" width="75" height="9" rx="1.5" fill="#152778" stroke="#152778" stroke-width="1.2"/>
+        <path d="M78 24 L96 24 L96 26 L78 26 Z" fill="#d63031"/>
+        <polygon points="25,26 10,30.5 25,35" fill="#ede6d4" stroke="#152778" stroke-width="1.2"/>
+        <circle cx="9" cy="30.5" r="1.5" fill="#152778"/>
+        <circle cx="3" cy="31" r="2" fill="#152778"/>
+      </g>
+    </svg>
+
+    <!-- Swinging Spidey Doodle Assembly -->
+    <svg class="doodle-spidey-swing" viewBox="0 0 160 220" fill="none" xmlns="http://www.w3.org/2000/svg">
+      <line x1="80" y1="0" x2="80" y2="135" stroke="#152778" stroke-width="2.5" stroke-dasharray="8 3" stroke-linecap="round"/>
+      <path d="M72 0 C75 4 85 4 88 0 C86 6 83 8 80 8 C77 8 74 6 72 0 Z" fill="#152778"/>
+      <g class="spidey-legs-wiggle">
+        <!-- Left Legs -->
+        <path d="M72 140 Q55 125 42 135" stroke="#152778" stroke-width="2.8" stroke-linecap="round"/>
+        <path d="M70 146 Q50 142 38 152" stroke="#152778" stroke-width="2.8" stroke-linecap="round"/>
+        <path d="M70 152 Q52 160 42 170" stroke="#152778" stroke-width="2.8" stroke-linecap="round"/>
+        <path d="M73 158 Q58 178 48 188" stroke="#152778" stroke-width="2.8" stroke-linecap="round"/>
+
+        <!-- Right Legs -->
+        <path d="M88 140 Q105 125 118 135" stroke="#152778" stroke-width="2.8" stroke-linecap="round"/>
+        <path d="M90 146 Q110 142 122 152" stroke="#152778" stroke-width="2.8" stroke-linecap="round"/>
+        <path d="M90 152 Q108 160 118 170" stroke="#152778" stroke-width="2.8" stroke-linecap="round"/>
+        <path d="M87 158 Q102 178 112 188" stroke="#152778" stroke-width="2.8" stroke-linecap="round"/>
+
+        <!-- Body & Head -->
+        <ellipse cx="80" cy="152" rx="14" ry="18" fill="#152778" stroke="#152778" stroke-width="2"/>
+        <circle cx="80" cy="136" r="10" fill="#152778" stroke="#152778" stroke-width="1.5"/>
+
+        <!-- Spidey Eyes -->
+        <path d="M73 134 Q76 131 79 137 Q75 138 73 134 Z" fill="#f5eedd" stroke="#152778" stroke-width="1.2"/>
+        <path d="M87 134 Q84 131 81 137 Q85 138 87 134 Z" fill="#f5eedd" stroke="#152778" stroke-width="1.2"/>
+
+        <!-- Hatching -->
+        <line x1="72" y1="150" x2="88" y2="150" stroke="#f5eedd" stroke-width="1.2" stroke-dasharray="3 2" opacity="0.8"/>
+        <line x1="74" y1="155" x2="86" y2="155" stroke="#f5eedd" stroke-width="1.2" stroke-dasharray="3 2" opacity="0.8"/>
+        <line x1="76" y1="160" x2="84" y2="160" stroke="#f5eedd" stroke-width="1.2" stroke-dasharray="3 2" opacity="0.8"/>
+      </g>
+    </svg>
+
+    <!-- Main Blueprint Card -->
+    <div id="loading-card" class="loading-blueprint-card">
+      <div class="loading-tape"></div>
+      <div class="loading-stamp">DRAFT #01 // BLUEPRINT</div>
+
+      <div class="loading-card-badge">[ DRAFTING DESK // INITIALIZING ENGINE ]</div>
+      <div class="loading-card-title">SPIDEY SHOOT</div>
+      <div class="loading-card-subtitle">FIRST-PERSON BALLPOINT BLUEPRINT FPS</div>
+      <hr class="loading-card-divider" />
+
+      <!-- Hatching Progress Bar -->
+      <div class="loading-bar-frame">
+        <div id="loading-bar-fill" class="loading-bar-fill"></div>
+      </div>
+
+      <!-- Progress Info -->
+      <div class="loading-info-row">
+        <span id="loading-status-text">✏️ Priming ballpoint pens & drafting notebook...</span>
+        <span id="loading-percentage">5%</span>
+      </div>
+
+      <!-- Hand-Drawn Post-It Sticky Note -->
+      <div class="loading-sticky-note">
+        <div class="loading-sticky-pin"></div>
+        <div class="loading-sticky-title">📌 DRAFTING MANUAL RULE #1:</div>
+        <div>The PISTOL & KATANA are fireable while swinging! Aerial combat = Pistol & Katana. Ground = SMG & Scoped Sniper!</div>
+        <div class="loading-sticky-controls">Controls: [E] Swing · [F] Web Zip · [SPACE] Winch · [ENTER] Start · [1 2 3 4] Weapons</div>
+      </div>
+    </div>
+  </div>
+
   <!-- 3D WebGL Canvas Layer -->
   <div id="canvas-container"></div>
   <div class="notebook-lines-overlay"></div>
 
   <!-- Start / Pause Instructions Modal (Drafting Notebook Theme) -->
-  <div id="instructions-modal">
+  <div id="instructions-modal" class="loading-hidden">
+    <!-- Red Notebook Margin -->
+    <div class="doodle-notebook-margin"></div>
+
+    <!-- Notebook Binder Punch Holes -->
+    <div class="doodle-binder-holes">
+      <div class="doodle-hole"></div>
+      <div class="doodle-hole"></div>
+      <div class="doodle-hole"></div>
+      <div class="doodle-hole"></div>
+    </div>
+
+    <!-- Corner Spiderweb Doodles -->
+    <svg class="doodle-corner-web-tl" viewBox="0 0 120 120" fill="none" xmlns="http://www.w3.org/2000/svg">
+      <path d="M0 0 L120 20 M0 0 L100 60 M0 0 L60 100 M0 0 L20 120" stroke="#152778" stroke-width="1.5" stroke-linecap="round"/>
+      <path d="M30 5 Q25 15 5 30" stroke="#152778" stroke-width="1.5" stroke-linecap="round"/>
+      <path d="M60 10 Q50 30 10 60" stroke="#152778" stroke-width="1.5" stroke-linecap="round"/>
+      <path d="M90 15 Q75 45 15 90" stroke="#152778" stroke-width="1.5" stroke-linecap="round"/>
+      <path d="M115 19 Q95 57 19 115" stroke="#152778" stroke-width="1.5" stroke-linecap="round"/>
+      <circle cx="95" cy="48" r="1.5" fill="#152778"/>
+      <circle cx="50" cy="22" r="1.5" fill="#152778"/>
+    </svg>
+
+    <svg class="doodle-corner-web-tr" viewBox="0 0 120 120" fill="none" xmlns="http://www.w3.org/2000/svg">
+      <path d="M120 0 L0 20 M120 0 L20 60 M120 0 L60 100 M120 0 L100 120" stroke="#152778" stroke-width="1.5" stroke-linecap="round"/>
+      <path d="M90 5 Q95 15 115 30" stroke="#152778" stroke-width="1.5" stroke-linecap="round"/>
+      <path d="M60 10 Q70 30 110 60" stroke="#152778" stroke-width="1.5" stroke-linecap="round"/>
+      <path d="M30 15 Q45 45 105 90" stroke="#152778" stroke-width="1.5" stroke-linecap="round"/>
+      <path d="M5 19 Q25 57 101 115" stroke="#152778" stroke-width="1.5" stroke-linecap="round"/>
+      <path d="M35 85 L37 91 L43 93 L37 95 L35 101 L33 95 L27 93 L33 91 Z" fill="#d63031" opacity="0.7"/>
+    </svg>
+
+    <!-- Bottom Corner Doodles -->
+    <svg class="doodle-skyline-bl" viewBox="0 0 140 80" fill="none" xmlns="http://www.w3.org/2000/svg">
+      <rect x="10" y="25" width="28" height="55" stroke="#152778" stroke-width="1.5" stroke-dasharray="4 2"/>
+      <line x1="24" y1="25" x2="24" y2="10" stroke="#152778" stroke-width="1.5"/>
+      <rect x="44" y="15" width="34" height="65" stroke="#152778" stroke-width="1.8"/>
+      <line x1="50" y1="25" x2="72" y2="25" stroke="#152778" stroke-width="1.2" stroke-dasharray="2 2"/>
+      <line x1="50" y1="35" x2="72" y2="35" stroke="#152778" stroke-width="1.2" stroke-dasharray="2 2"/>
+      <line x1="50" y1="45" x2="72" y2="45" stroke="#152778" stroke-width="1.2" stroke-dasharray="2 2"/>
+      <rect x="84" y="35" width="26" height="45" stroke="#152778" stroke-width="1.5" stroke-dasharray="3 3"/>
+    </svg>
+
+    <svg class="doodle-pen-br" viewBox="0 0 130 60" fill="none" xmlns="http://www.w3.org/2000/svg">
+      <g transform="rotate(-18 65 30)">
+        <rect x="25" y="26" width="75" height="9" rx="1.5" fill="#152778" stroke="#152778" stroke-width="1.2"/>
+        <path d="M78 24 L96 24 L96 26 L78 26 Z" fill="#d63031"/>
+        <polygon points="25,26 10,30.5 25,35" fill="#ede6d4" stroke="#152778" stroke-width="1.2"/>
+        <circle cx="9" cy="30.5" r="1.5" fill="#152778"/>
+        <circle cx="3" cy="31" r="2" fill="#152778"/>
+      </g>
+    </svg>
+
+    <!-- Swinging Spidey Doodle Assembly -->
+    <svg class="doodle-spidey-swing" viewBox="0 0 160 220" fill="none" xmlns="http://www.w3.org/2000/svg">
+      <line x1="80" y1="0" x2="80" y2="135" stroke="#152778" stroke-width="2.5" stroke-dasharray="8 3" stroke-linecap="round"/>
+      <path d="M72 0 C75 4 85 4 88 0 C86 6 83 8 80 8 C77 8 74 6 72 0 Z" fill="#152778"/>
+      <g class="spidey-legs-wiggle">
+        <!-- Left Legs -->
+        <path d="M72 140 Q55 125 42 135" stroke="#152778" stroke-width="2.8" stroke-linecap="round"/>
+        <path d="M70 146 Q50 142 38 152" stroke="#152778" stroke-width="2.8" stroke-linecap="round"/>
+        <path d="M70 152 Q52 160 42 170" stroke="#152778" stroke-width="2.8" stroke-linecap="round"/>
+        <path d="M73 158 Q58 178 48 188" stroke="#152778" stroke-width="2.8" stroke-linecap="round"/>
+
+        <!-- Right Legs -->
+        <path d="M88 140 Q105 125 118 135" stroke="#152778" stroke-width="2.8" stroke-linecap="round"/>
+        <path d="M90 146 Q110 142 122 152" stroke="#152778" stroke-width="2.8" stroke-linecap="round"/>
+        <path d="M90 152 Q108 160 118 170" stroke="#152778" stroke-width="2.8" stroke-linecap="round"/>
+        <path d="M87 158 Q102 178 112 188" stroke="#152778" stroke-width="2.8" stroke-linecap="round"/>
+
+        <!-- Body & Head -->
+        <ellipse cx="80" cy="152" rx="14" ry="18" fill="#152778" stroke="#152778" stroke-width="2"/>
+        <circle cx="80" cy="136" r="10" fill="#152778" stroke="#152778" stroke-width="1.5"/>
+
+        <!-- Spidey Eyes -->
+        <path d="M73 134 Q76 131 79 137 Q75 138 73 134 Z" fill="#f5eedd" stroke="#152778" stroke-width="1.2"/>
+        <path d="M87 134 Q84 131 81 137 Q85 138 87 134 Z" fill="#f5eedd" stroke="#152778" stroke-width="1.2"/>
+
+        <!-- Hatching -->
+        <line x1="72" y1="150" x2="88" y2="150" stroke="#f5eedd" stroke-width="1.2" stroke-dasharray="3 2" opacity="0.8"/>
+        <line x1="74" y1="155" x2="86" y2="155" stroke="#f5eedd" stroke-width="1.2" stroke-dasharray="3 2" opacity="0.8"/>
+        <line x1="76" y1="160" x2="84" y2="160" stroke="#f5eedd" stroke-width="1.2" stroke-dasharray="3 2" opacity="0.8"/>
+      </g>
+    </svg>
+
     <div class="instructions-card">
-      <div class="instructions-title">SPIDER-MAN: INK SKETCH</div>
+      <div class="modal-tape"></div>
+      <div class="modal-stamp">DRAFT #01 // DOSSIER</div>
+
+      <div class="modal-badge">[ FIELD MANUAL // TACTICAL CONTROLS ]</div>
+      <div class="instructions-title">SPIDEY SHOOT</div>
       <div class="instructions-subtitle">FIRST-PERSON BALLPOINT BLUEPRINT FPS</div>
 
       <div class="controls-grid">
-        <div><span class="key-badge">W A S D</span> Walk (human) / Pump Swing</div>
-        <div><span class="key-badge">SHIFT</span> Sprint (ground) / Reel-In (swing)</div>
-        <div><span class="key-badge">C</span> Crouch / Sit (ground)</div>
-        <div><span class="key-badge">SPACE</span> Jump / Tap Sling · Hold Winch to Anchor</div>
-        <div><span class="key-badge">E / RIGHT CLICK</span> Tap to Web-Swing (sticky) · E again to re-grab</div>
-        <div><span class="key-badge">F</span> Web Zip to Target</div>
-        <div><span class="key-badge">LEFT CLICK / V</span> Fire Weapon (pistol works mid-swing)</div>
-        <div><span class="key-badge">Q / MMB</span> Aim Down Sights / Scope</div>
-        <div><span class="key-badge">1 2 3 / Wheel</span> Pistol / SMG / Sniper</div>
-        <div><span class="key-badge">SHIFT / CTRL</span> Sprint / Dive (ground+air) · Reel In / Out (swing)</div>
-        <div><span class="key-badge">R</span> Reload / Restart</div>
+        <!-- Locomotion Column -->
+        <div class="controls-col">
+          <div class="controls-section-title">LOCOMOTION & WEB-SLINGING</div>
+          <div class="ctrl-item"><span class="key-badge">W A S D</span> Walk / Pump Swing</div>
+          <div class="ctrl-item"><span class="key-badge">SPACE</span> Jump / Tap Sling · Winch (hold)</div>
+          <div class="ctrl-item"><span class="key-badge">E / RMB</span> Web-Swing (sticky latch)</div>
+          <div class="ctrl-item"><span class="key-badge">F</span> Web Zip to Target Anchor</div>
+          <div class="ctrl-item"><span class="key-badge">SHIFT / CTRL</span> Sprint · Dive · Reel In / Out</div>
+          <div class="ctrl-item"><span class="key-badge">C</span> Crouch / Sit on Ledge</div>
+        </div>
+
+        <!-- Combat Column -->
+        <div class="controls-col">
+          <div class="controls-section-title">COMBAT & ARSENAL</div>
+          <div class="ctrl-item"><span class="key-badge">LMB / V / ENTER</span> Fire Weapon / Swing Katana</div>
+          <div class="ctrl-item"><span class="key-badge">Q / MMB</span> Aim Down Sights / Sniper Scope</div>
+          <div class="ctrl-item"><span class="key-badge">1 2 3 4</span> Sword / Pistol / SMG / Sniper</div>
+          <div class="ctrl-item"><span class="key-badge">WHEEL</span> Next / Prev Weapon</div>
+          <div class="ctrl-item"><span class="key-badge">R</span> Reload Magazine / Restart</div>
+          <div class="ctrl-item"><span class="key-badge">P / ESC</span> Pause & Settings Menu</div>
+        </div>
       </div>
 
-      <div style="margin-bottom: 20px; font-size: 15px; font-weight: 700; color: var(--ink-red); background: rgba(214, 48, 49, 0.08); padding: 10px 16px; border: 1px dashed var(--ink-red); border-radius: 4px;">
-        ! COMBAT RULE: The PISTOL is the ONLY weapon fireable while swinging! Aerial combat = Pistol. Ground combat = SMG & Scoped Sniper!
+      <!-- Combat Rule Banner -->
+      <div class="modal-combat-rule">
+        <span class="rule-icon">⚔️</span>
+        <div>
+          <strong>AERIAL COMBAT:</strong> The <strong>PISTOL & KATANA</strong> are fireable while swinging!
+          <span class="rule-sub">Aerial combat = Pistol & Katana · Ground combat = SMG & Scoped Sniper</span>
+        </div>
       </div>
 
       <!-- Modal Quick Controls (Bound to central SettingsData) -->
@@ -45,34 +304,61 @@
           <input id="modal-sens" type="range" min="0.5" max="2" step="0.05" value="0.8" />
           <span id="modal-sens-v">0.80x</span>
         </label>
+        <div class="modal-ctrl-divider"></div>
         <label class="modal-ctrl-row modal-check">
           <input id="modal-mute" type="checkbox" />
           <span>MUTE (M)</span>
         </label>
       </div>
-      <div class="modal-sens-note">Default 0.80x tuned for trackpads · adjust for mouse</div>
+      <div class="modal-sens-note">Default 0.80x tuned for trackpads · adjust for mouse · Press P in-game to reopen</div>
 
-      <button id="play-button" class="play-prompt-btn">ENTER BLUEPRINT CITY & PLAY</button>
+      <!-- Play & Launch Action Area (Keyboard Enter Only) -->
+      <div class="play-action-area">
+        <div id="play-button" class="start-enter-box" title="Press Enter key to start">
+          <span class="enter-key-cap">ENTER ↵</span>
+          <span class="start-enter-label">PRESS ENTER TO PLAY</span>
+        </div>
+        <div id="play-action-hint" class="play-action-hint">PRESS ENTER ON YOUR KEYBOARD TO START</div>
+      </div>
     </div>
   </div>
 
+
   <script>
+    // Early loading ticker: starts moving progress immediately as HTML parses
+    (function() {
+      var pct = 5;
+      var fill = document.getElementById('loading-bar-fill');
+      var label = document.getElementById('loading-percentage');
+      var timer = setInterval(function() {
+        if (pct < 35) {
+          pct += 3;
+          if (fill) fill.style.width = pct + '%';
+          if (label) label.textContent = pct + '%';
+        } else {
+          clearInterval(timer);
+        }
+      }, 50);
+    })();
+
     // Runs even if the game modules fail: surfaces load errors on-screen.
     window.addEventListener('error', function (e) {
       var el = document.getElementById('spidey-load-error');
       if (!el) {
         el = document.createElement('pre');
         el.id = 'spidey-load-error';
-        el.style.cssText = 'position:fixed;left:12px;bottom:12px;z-index:999;max-width:60ch;background:#d63031;color:#faf7ee;padding:10px 14px;font:12px monospace;white-space:pre-wrap;';
+        el.style.cssText = 'position:fixed;left:12px;bottom:12px;z-index:999;max-width:60ch;background:#d63031;color:#f5eedd;padding:10px 14px;font:12px monospace;white-space:pre-wrap;';
         document.body.appendChild(el);
       }
       el.textContent = 'SPIDEY FAILED TO LOAD (screenshot this): ' + (e.message || e.type);
     }, true);
-    // Early-click intent: if PLAY is hit before the game code arrives,
+    // Early-enter intent: if Enter is hit before the game code arrives,
     // remember it so boot can start the game immediately once ready.
     window.__spideyWantPlay = false;
-    document.getElementById('play-button').addEventListener('click', function () {
-      window.__spideyWantPlay = true;
+    window.addEventListener('keydown', function (e) {
+      if (e.key === 'Enter' || e.code === 'Enter') {
+        window.__spideyWantPlay = true;
+      }
     });
   </script>
 

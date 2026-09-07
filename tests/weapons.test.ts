@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import * as THREE from 'three';
+import { Sword } from '../src/weapons/Sword';
 import { Pistol } from '../src/weapons/Pistol';
 import { SMG } from '../src/weapons/SMG';
 import { Sniper } from '../src/weapons/Sniper';
@@ -7,25 +8,46 @@ import { WeaponManager } from '../src/player/WeaponManager';
 
 describe('Weapons System - Swinging Restrictions & Combat Rules', () => {
   let wepManager: WeaponManager;
+  let sword: Sword;
   let pistol: Pistol;
   let smg: SMG;
   let sniper: Sniper;
 
   beforeEach(() => {
     wepManager = new WeaponManager();
-    pistol = wepManager.weapons[0] as Pistol;
-    smg = wepManager.weapons[1] as SMG;
-    sniper = wepManager.weapons[2] as Sniper;
+    sword = wepManager.weapons[0] as Sword;
+    pistol = wepManager.weapons[1] as Pistol;
+    smg = wepManager.weapons[2] as SMG;
+    sniper = wepManager.weapons[3] as Sniper;
   });
 
-  it('CRUCIAL RULE: Pistol is the ONLY weapon with usableWhileSwinging = true', () => {
+  it('4-Slot layout: [Sword, Pistol, SMG/Rifle, Sniper] with swinging permissions', () => {
+    expect(sword.type).toBe('sword');
+    expect(pistol.type).toBe('pistol');
+    expect(smg.type).toBe('smg');
+    expect(sniper.type).toBe('sniper');
+
+    expect(sword.usableWhileSwinging).toBe(true);
     expect(pistol.usableWhileSwinging).toBe(true);
     expect(smg.usableWhileSwinging).toBe(false);
     expect(sniper.usableWhileSwinging).toBe(false);
   });
 
+  it('Sword can slash while swinging with infinite ammo', () => {
+    wepManager.switchWeapon(0); // Sword
+    const now = 10.0;
+    const origin = new THREE.Vector3(0, 10, 0);
+    const dir = new THREE.Vector3(0, 0, -1);
+    const isSwinging = true;
+
+    const result = wepManager.fire(now, origin, dir, isSwinging, []);
+    expect(result).not.toBeNull();
+    expect(sword.currentAmmo).toBe(1); // Infinite
+  });
+
   it('Pistol can fire while swinging', () => {
-    wepManager.switchWeapon(0); // Pistol
+    wepManager.switchWeapon(1); // Pistol
+    wepManager.update(0.3, false, false, false, 0);
     const now = 10.0;
     const origin = new THREE.Vector3(0, 10, 0);
     const dir = new THREE.Vector3(0, 0, -1);
@@ -37,7 +59,8 @@ describe('Weapons System - Swinging Restrictions & Combat Rules', () => {
   });
 
   it('SMG CANNOT fire while swinging', () => {
-    wepManager.switchWeapon(1); // SMG
+    wepManager.switchWeapon(2); // SMG
+    wepManager.update(0.3, false, false, false, 0);
     const now = 10.0;
     const origin = new THREE.Vector3(0, 10, 0);
     const dir = new THREE.Vector3(0, 0, -1);
@@ -49,7 +72,8 @@ describe('Weapons System - Swinging Restrictions & Combat Rules', () => {
   });
 
   it('Sniper CANNOT fire while swinging', () => {
-    wepManager.switchWeapon(2); // Sniper
+    wepManager.switchWeapon(3); // Sniper
+    wepManager.update(0.3, false, false, false, 0);
     const now = 10.0;
     const origin = new THREE.Vector3(0, 10, 0);
     const dir = new THREE.Vector3(0, 0, -1);
@@ -65,14 +89,14 @@ describe('Weapons System - Swinging Restrictions & Combat Rules', () => {
     const dir = new THREE.Vector3(0, 0, -1);
 
     // SMG (let the 0.25s swap raise finish first)
-    wepManager.switchWeapon(1);
+    wepManager.switchWeapon(2);
     wepManager.update(0.3, false, false, false, 0);
     const smgResult = wepManager.fire(10.0, origin, dir, false, []);
     expect(smgResult).not.toBeNull();
     expect(smg.currentAmmo).toBe(smg.magazineSize - 1);
 
     // Sniper
-    wepManager.switchWeapon(2);
+    wepManager.switchWeapon(3);
     wepManager.update(0.3, false, false, false, 0);
     const sniperResult = wepManager.fire(12.0, origin, dir, false, []);
     expect(sniperResult).not.toBeNull();
@@ -80,7 +104,7 @@ describe('Weapons System - Swinging Restrictions & Combat Rules', () => {
   });
 
   it('freshly swapped weapon cannot fire mid-raise (0.25s swap weight)', () => {
-    wepManager.switchWeapon(1);
+    wepManager.switchWeapon(2);
     const origin = new THREE.Vector3(0, 10, 0);
     const dir = new THREE.Vector3(0, 0, -1);
     expect(wepManager.fire(10.0, origin, dir, false, [])).toBeNull();
@@ -89,10 +113,12 @@ describe('Weapons System - Swinging Restrictions & Combat Rules', () => {
   });
 
   it('switching cancels an in-progress reload', () => {
+    wepManager.switchWeapon(1);
+    wepManager.update(0.3, false, false, false, 0);
     pistol.currentAmmo = 2;
     pistol.startReload();
     expect(pistol.isReloading).toBe(true);
-    wepManager.switchWeapon(1);
+    wepManager.switchWeapon(2);
     expect(pistol.isReloading).toBe(false);
   });
 
@@ -258,10 +284,10 @@ describe('Reload Dip & Tilt Animation Monotonicity [13, 32]', () => {
 
   beforeEach(() => {
     wepManager = new WeaponManager();
-    wepManager.switchWeapon(0); // Pistol
+    wepManager.switchWeapon(1); // Pistol
     // Clear initial switch weight
     wepManager.update(0.3, false, false, false, 0);
-    pistol = wepManager.weapons[0] as Pistol;
+    pistol = wepManager.weapons[1] as Pistol;
   });
 
   it('dips downward monotonically during first half of reload (0.0 -> 0.5)', () => {
@@ -381,9 +407,9 @@ describe('SMG Horizontal Drift & Muzzle Hand-Light Pulse [12.2, 13]', () => {
 
   beforeEach(() => {
     wepManager = new WeaponManager();
-    wepManager.switchWeapon(1); // SMG
+    wepManager.switchWeapon(2); // SMG
     wepManager.update(0.3, false, false, false, 0);
-    smg = wepManager.weapons[1] as SMG;
+    smg = wepManager.weapons[2] as SMG;
   });
 
   it('accumulates horizontal drift while held and resets on release or reload', () => {
