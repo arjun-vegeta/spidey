@@ -1,4 +1,6 @@
 import * as THREE from 'three';
+import { WorldCollider } from '../world/WorldCollider';
+import { CHARACTER_HEIGHT, CROUCH_HEIGHT } from '../core/CoverMetrics';
 
 export interface WebAnchor {
   point: THREE.Vector3;
@@ -40,11 +42,17 @@ export class SwingPhysics {
   //   the web is what flies. Full speed in ~0.4s, full stop in ~0.3s, ADS 60%.
   // - Sprint (Shift, ground only, 8 m/s): a run, not flight. Never applies in air
   //   or while swinging (Shift reels rope there). No ADS sprint.
-  // - Crouch (C, ground only, 2.2 m/s, 1.2m tall): sit/crouch for cover and cover
-  //   fire. Standing back up needs headroom or you stay down.
+  // - Crouch (C, ground only, 3.6 m/s, 0.9m tall = exactly rail height): duck fully
+  //   behind any railing. Bullets stop in the rail, but so do yours — stand to shoot.
+  //   Standing back up needs headroom or you stay down. See core/CoverMetrics.ts.
   // - Air control (6.5 m/s^2): deliberately weak. Air steering without a web is a
   //   nudge, not flight. Brake (S) bleeds at 16 m/s^2 for perch landings.
   // - Jump (8.8 m/s): ~1.5m hop under 26 m/s^2 gravity. Athletic, not lunar.
+  // - Winch (46 m/s^2 pull, 32 m/s cap): a motor, not a teleport. Speed builds with
+  //   the distance hauled and is NOT bled off on approach, so arrival keeps it:
+  //   a full-cap reel up a facade sails ~20m past the anchor before gravity wins,
+  //   a short yank barely clears it. Only velocity driving into geometry is taken
+  //   back, cancelled against the real face normal probed at arrival.
   // - Dive rate (+16.0 m/s^2 down, +8.0 m/s^2 forward, 0.5 rad/s pitch assist): Holding Ctrl in air adds downward
   //   momentum assist + forward glide for high-speed dive-bombs, strictly clamped at terminalVelocity (65.0 m/s).
   // - Zip ease curve (5.0m -> 2.5m, 62 m/s -> 28 m/s): Linear ease over final 5 meters ensures player arrives at
@@ -83,11 +91,17 @@ export class SwingPhysics {
   // Hard-landing control damp timer (0.25s control damp after landing > 25 m/s)
   public controlDampTimer: number = 0;
 
-  // Winch mode: holding Space while swinging reels you to the anchor.
+  // Winch mode: holding E after the web sticks reels you to the anchor.
   // Set per-frame by Player; cleared on release/arrival/landing.
+  // The pull is a constant-force motor (winchAccel) capped at winchSpeed, so a long
+  // haul up a facade arrives much faster than a short yank — and whatever speed you
+  // built is the speed you leave with. See the arrival block in updateSwinging().
   public winching: boolean = false;
-  public winchSpeed: number = 26.0;
+  public winchAccel: number = 46.0; // m/s^2 along the line
+  public winchSpeed: number = 32.0; // m/s cap
   public winchArriveDist: number = 3.0;
+  /** Bound by Player. Lets winch arrival probe real geometry instead of guessing. */
+  public worldCollider: WorldCollider | null = null;
 
   // Web zip state
   public zipTarget: THREE.Vector3 | null = null;
@@ -102,7 +116,7 @@ export class SwingPhysics {
 
   // Ground check
   public isGrounded: boolean = false;
-  public playerHeight: number = 1.8;
+  public playerHeight: number = CHARACTER_HEIGHT;
   public playerRadius: number = 0.6;
 
   // Human locomotion (m/s) tuned from inspiration (inspiration/src/player.js):
@@ -111,8 +125,10 @@ export class SwingPhysics {
   public sprintMultiplier: number = 10.6 / 6.6; // 10.6 m/s sprint
   public crouchSpeed: number = 3.6; // 3.6 m/s crouch shuffle
   public crouching: boolean = false; // set per-frame by Player
-  public standHeight: number = 1.8;
-  public crouchHeight: number = 1.2;
+  public standHeight: number = CHARACTER_HEIGHT;
+  // Crouched height equals the rail height, so a crouched silhouette fits
+  // entirely behind any railing in the city. See core/CoverMetrics.ts.
+  public crouchHeight: number = CROUCH_HEIGHT;
   public groundAccelRate: number = 140.0; // Quake-style crisp responsive ground accel (m/s^2)
   public groundFriction: number = 8.0; // Clean deceleration
   public airControlAccel: number = 36.0; // Responsive air steering (m/s^2)
@@ -195,8 +211,9 @@ export class SwingPhysics {
   }
 
   /**
-   * Space while swinging: sling TOWARD the anchor. The web yanks you to the
-   * point you shot, keeping at least slingMinSpeed so it always feels like a yank.
+   * Sling TOWARD the anchor: the web yanks you to the point you shot, keeping at
+   * least slingMinSpeed so it always feels like a yank.
+   * Currently unbound — the controls are tap E to shoot, hold E to winch.
    */
   public slingTowardAnchor(lookDir?: THREE.Vector3, slingMinSpeed: number = 17.0, lift: number = 4.5): void {
     if (this.mode !== MovementMode.SWINGING || !this.webAnchor) return;
@@ -334,24 +351,38 @@ export class SwingPhysics {
     this.swingTime += dt;
 
     // 0. Winch: powered pull straight to the anchor, ignoring the pendulum.
-    // Ease-out over the last 8m so arrival doesn't slam the wall at full speed,
-    // then pop the line into a forward+up vault. (Keeping the raw into-wall
-    // velocity used to insta-die on wall push-out, sticking the player to the
-    // face and dropping them straight down — the "flash to the bottom".)
     if (this.winching) {
       const toAnchor = this._tempVecA.subVectors(this.webAnchor, this.position);
       const dist = toAnchor.length();
       if (dist < this.winchArriveDist) {
-        const incoming = this.velocity.length();
-        const incomingUp = Math.max(this.velocity.y, 0);
-        const flat = this._tempVecC.set(lookDir.x, 0, lookDir.z);
-        if (flat.lengthSq() < 1e-4) {
-          flat.set(this.velocity.x, 0, this.velocity.z);
-          if (flat.lengthSq() < 1e-4) flat.set(0, 0, -1);
+        // Arrival: the line pops, but the momentum is yours. Reeling 40m up a
+        // facade arrives at the cap and throws you tens of metres above the
+        // anchor before gravity wins; a 4m yank barely clears it. Nothing is
+        // clamped away here — the only thing the world takes back is velocity
+        // driving into solid geometry, so probe along the direction of travel
+        // and kill just that component against the real face normal.
+        // (This is what used to cause the "flash to the bottom": keeping raw
+        // into-wall speed made push-out fight the player down the facade.)
+        const speed = this.velocity.length();
+        if (speed > 1e-4 && this.worldCollider) {
+          const dir = this._tempVecB.copy(this.velocity).multiplyScalar(1 / speed);
+          const probe = THREE.MathUtils.clamp(speed * 0.12, 1.5, 4.0);
+          const hit = this.worldCollider.raycast(this.position, dir, probe);
+          if (hit) {
+            const n = this._tempVecC.copy(hit.normal);
+            const into = this.velocity.dot(n);
+            if (into < 0) {
+              const absorbed = -into;
+              // Cancel the into-surface component, then spend a little of it on a
+              // push off the face and a vault, so a flat slam becomes a climb.
+              this.velocity.addScaledVector(n, absorbed + Math.min(absorbed * 0.15, 3.0));
+              this.velocity.y += Math.min(absorbed * 0.3, 8.0);
+            }
+          }
         }
-        flat.normalize();
-        this.velocity.copy(flat).multiplyScalar(THREE.MathUtils.clamp(incoming * 0.45, 8.0, 15.0));
-        this.velocity.y = THREE.MathUtils.clamp(incomingUp * 0.35 + 5.0, 6.0, 11.0);
+        if (this.velocity.length() > this.terminalVelocity) {
+          this.velocity.normalize().multiplyScalar(this.terminalVelocity);
+        }
         this.mode = MovementMode.AIR;
         this.webAnchor = null;
         this.webAnchorNormal = null;
@@ -360,11 +391,12 @@ export class SwingPhysics {
         this.winching = false;
         return;
       }
-      toAnchor.normalize();
-      const easeT = THREE.MathUtils.clamp((dist - this.winchArriveDist) / 8.0, 0, 1);
-      const fullSpeed = Math.max(this.velocity.length(), this.winchSpeed);
-      const speed = THREE.MathUtils.lerp(9.0, fullSpeed, easeT);
-      this.velocity.copy(toAnchor).multiplyScalar(speed);
+      // Constant-force pull along the line, capped. Speed builds with distance
+      // hauled, which is exactly what makes the arrival overshoot scale.
+      toAnchor.multiplyScalar(1 / dist);
+      const cap = Math.min(Math.max(this.winchSpeed, this.velocity.length()), this.terminalVelocity);
+      const along = Math.max(this.velocity.dot(toAnchor), 0);
+      this.velocity.copy(toAnchor).multiplyScalar(Math.min(cap, along + this.winchAccel * dt));
       return;
     }
 

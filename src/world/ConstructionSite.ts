@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { InkShaderMaterial } from '../shaders/InkShaderMaterial';
 import { LANDABLE_TRIM } from './LandableTrim';
+import { COVER_RAIL_HEIGHT, RAIL_PANEL_THICKNESS } from '../core/CoverMetrics';
 
 /**
  * Procedural Construction Site representing the iconic unfinished multi-story high-rise.
@@ -257,7 +258,7 @@ export class ConstructionSite {
       }
 
       // Solid balustrade / guardrail wall along the outer side
-      const balustradeHeight = 1.1;
+      const balustradeHeight = COVER_RAIL_HEIGHT;
       const balustradeGeom = new THREE.BoxGeometry(0.18, balustradeHeight, hypotenuse);
       const balustrade = this.addMeshWithEdges(stairGroup, balustradeGeom, this.concreteMat, InkShaderMaterial.defaultInkColor, true);
       balustrade.rotation.x = isEven ? -slopeAngle : slopeAngle;
@@ -276,10 +277,17 @@ export class ConstructionSite {
       const landing = this.addMeshWithEdges(this.group, landingGeom, this.concreteMat, InkShaderMaterial.defaultInkColor, true);
       landing.position.set(8.5, topY, isEven ? 5.5 : -3.5);
 
-      // Landing safety railing
-      const railBarGeom = new THREE.BoxGeometry(4.0, 0.08, 0.08);
+      // Landing safety railing: a SOLID half-character panel, not open bars.
+      // An open balustrade would let bullets through the gaps and would not
+      // read as cover when the player crouches behind it.
+      const landRailZ = isEven ? 7.0 : -5.0;
+      const landPanelGeom = new THREE.BoxGeometry(4.0, COVER_RAIL_HEIGHT, RAIL_PANEL_THICKNESS);
+      const landPanel = this.addMeshWithEdges(this.group, landPanelGeom, this.metalMat, InkShaderMaterial.defaultInkColor, true);
+      landPanel.position.set(8.5, topY + COVER_RAIL_HEIGHT * 0.5, landRailZ);
+
+      const railBarGeom = new THREE.BoxGeometry(4.0, 0.08, 0.22);
       const railBar = this.addMeshWithEdges(this.group, railBarGeom, this.metalMat, InkShaderMaterial.defaultInkColor, false);
-      railBar.position.set(8.5, topY + 1.1, isEven ? 7.0 : -5.0);
+      railBar.position.set(8.5, topY + COVER_RAIL_HEIGHT, landRailZ);
 
       // Grapple points at each landing
       this.grapplePoints.push(new THREE.Vector3(8.5, topY + 1.2, isEven ? 5.5 : -3.5));
@@ -333,27 +341,25 @@ export class ConstructionSite {
     const postSpacing = bridgeLength / (numPosts - 1);
 
     for (const rz of railZOffsets) {
-      // Top handrail bar
-      const handrailGeom = new THREE.BoxGeometry(bridgeLength, 0.08, 0.08);
-      const handrail = this.addMeshWithEdges(this.group, handrailGeom, this.metalMat, InkShaderMaterial.defaultInkColor, true);
-      handrail.position.set(midX, bridgeY + 1.15, rz);
+      // Solid half-character infill panel. The catwalk is a firefight lane, so the
+      // rail has to be a real wall: open bars would let bullets through the gaps
+      // and give no cover to a crouched player.
+      const panelGeom = new THREE.BoxGeometry(bridgeLength, COVER_RAIL_HEIGHT, RAIL_PANEL_THICKNESS);
+      const panel = this.addMeshWithEdges(this.group, panelGeom, this.metalMat, InkShaderMaterial.defaultInkColor, true);
+      panel.position.set(midX, bridgeY + COVER_RAIL_HEIGHT * 0.5, rz);
 
-      // Mid rail bar
-      const midRailGeom = new THREE.BoxGeometry(bridgeLength, 0.05, 0.05);
-      const midRail = this.addMeshWithEdges(this.group, midRailGeom, this.metalMat, InkShaderMaterial.defaultInkColor, false);
-      midRail.position.set(midX, bridgeY + 0.6, rz);
+      // Top handrail bar, capping the panel lip
+      const handrailGeom = new THREE.BoxGeometry(bridgeLength, 0.08, 0.22);
+      const handrail = this.addMeshWithEdges(this.group, handrailGeom, this.metalMat, InkShaderMaterial.defaultInkColor, false);
+      handrail.position.set(midX, bridgeY + COVER_RAIL_HEIGHT, rz);
 
-      // Bottom kickplate / toe-board
-      const kickGeom = new THREE.BoxGeometry(bridgeLength, 0.2, 0.03);
-      const kick = this.addMeshWithEdges(this.group, kickGeom, this.metalMat, InkShaderMaterial.defaultInkColor, false);
-      kick.position.set(midX, bridgeY + 0.15, rz);
-
-      // Vertical stanchion posts
-      const postGeom = new THREE.BoxGeometry(0.08, 1.15, 0.08);
+      // Vertical stanchion posts, standing just proud of the panel face
+      const postGeom = new THREE.BoxGeometry(0.08, COVER_RAIL_HEIGHT, 0.08);
+      const postZ = rz + Math.sign(rz) * RAIL_PANEL_THICKNESS * 0.5;
       for (let p = 0; p < numPosts; p++) {
         const px = bridgeStartX - p * postSpacing;
         const post = this.addMeshWithEdges(this.group, postGeom, this.metalMat, InkShaderMaterial.defaultInkColor, false);
-        post.position.set(px, bridgeY + 0.6, rz);
+        post.position.set(px, bridgeY + COVER_RAIL_HEIGHT * 0.5, postZ);
       }
     }
 
@@ -437,10 +443,16 @@ export class ConstructionSite {
         plank.position.set(bx, ty + 0.04, baseZ - scafDepth * 0.5);
       }
 
-      // Guardrail along outer edge
-      const guardGeom = new THREE.BoxGeometry(numBays * bayWidth, 0.05, 0.05);
+      // Guardrail along outer edge: solid half-character panel (cover) + cap bar
+      const guardLen = numBays * bayWidth;
+      const guardX = startX + guardLen * 0.5;
+      const guardPanelGeom = new THREE.BoxGeometry(guardLen, COVER_RAIL_HEIGHT, RAIL_PANEL_THICKNESS);
+      const guardPanel = this.addMeshWithEdges(scafGroup, guardPanelGeom, this.metalMat, InkShaderMaterial.defaultInkColor, true);
+      guardPanel.position.set(guardX, ty + COVER_RAIL_HEIGHT * 0.5, baseZ - scafDepth);
+
+      const guardGeom = new THREE.BoxGeometry(guardLen, 0.05, 0.16);
       const guard = this.addMeshWithEdges(scafGroup, guardGeom, this.metalMat, InkShaderMaterial.defaultInkColor, false);
-      guard.position.set(startX + (numBays * bayWidth) * 0.5, ty + 1.0, baseZ - scafDepth);
+      guard.position.set(guardX, ty + COVER_RAIL_HEIGHT, baseZ - scafDepth);
     }
 
     // Diagonal X-bracing on outer face
@@ -908,57 +920,60 @@ export class ConstructionSite {
       crate.rotation.y = crot;
     }
 
-    // 4. Perimeter Safety Guardrails along floor edges
+    // 4. Perimeter Safety Guardrails along floor edges.
+    // Each run is a SOLID half-character panel with a handrail cap and posts, not
+    // an open balustrade: the open-bar version let bullets through the gaps, so
+    // crouching behind it gave no cover. Matching collision shells live in
+    // CityBuilder.buildCollisionShells (see PERIMETER_RAILS below).
     const railingFloors = [1, 2, 3, 4];
-    const railHeight = 1.1;
+    const railHeight = COVER_RAIL_HEIGHT;
+    const postGeom = new THREE.BoxGeometry(0.08, railHeight, 0.08);
+
+    /** Draws one solid rail run: cover panel + capping handrail + posts. */
+    const railRun = (
+      cx: number, fy: number, cz: number,
+      lengthX: number, lengthZ: number, postStep: number
+    ): void => {
+      const alongX = lengthX > lengthZ;
+      const panelGeom = new THREE.BoxGeometry(
+        alongX ? lengthX : RAIL_PANEL_THICKNESS,
+        railHeight,
+        alongX ? RAIL_PANEL_THICKNESS : lengthZ
+      );
+      const panel = this.addMeshWithEdges(propsGroup, panelGeom, this.craneMat, InkShaderMaterial.craneColor, true);
+      panel.position.set(cx, fy + railHeight * 0.5, cz);
+
+      const capGeom = new THREE.BoxGeometry(
+        alongX ? lengthX : 0.2,
+        0.08,
+        alongX ? 0.2 : lengthZ
+      );
+      const cap = this.addMeshWithEdges(propsGroup, capGeom, this.craneMat, InkShaderMaterial.craneColor, false);
+      cap.position.set(cx, fy + railHeight, cz);
+
+      const span = alongX ? lengthX : lengthZ;
+      const count = Math.max(2, Math.floor(span / postStep) + 1);
+      for (let i = 0; i < count; i++) {
+        const t = -span * 0.5 + (span * i) / (count - 1);
+        const post = this.addMeshWithEdges(propsGroup, postGeom, this.craneMat, InkShaderMaterial.craneColor, false);
+        post.position.set(alongX ? cx + t : cx, fy + railHeight * 0.5, alongX ? cz : cz + t);
+      }
+    };
 
     for (const floor of railingFloors) {
       const fy = floor * 5.0 + 0.5;
 
-      // South edge railings (z = -11.0, along x from -12 to 5)
-      const southRailGeom = new THREE.BoxGeometry(17.0, 0.08, 0.08);
-      const southRail = this.addMeshWithEdges(propsGroup, southRailGeom, this.craneMat, InkShaderMaterial.craneColor, false);
-      southRail.position.set(-3.5, fy + railHeight, -10.9);
+      // South edge (z = -10.9, x from -12 to 5)
+      railRun(-3.5, fy, -10.9, 17.0, 0, 3.4);
 
-      // Vertical posts along south edge
-      const postGeom = new THREE.BoxGeometry(0.08, railHeight, 0.08);
-      for (let x = -12.0; x <= 5.0; x += 3.4) {
-        const post = this.addMeshWithEdges(propsGroup, postGeom, this.craneMat, InkShaderMaterial.craneColor, false);
-        post.position.set(x, fy + railHeight * 0.5, -10.9);
-      }
-
-      // West edge railings (x = -13.0, along z from -10 to 10)
+      // West edge (x = -12.9, z from -10 to 10)
       if (floor !== 3) {
-        const westRailGeom = new THREE.BoxGeometry(0.08, 0.08, 20.0);
-        const westRail = this.addMeshWithEdges(propsGroup, westRailGeom, this.craneMat, InkShaderMaterial.craneColor, false);
-        westRail.position.set(-12.9, fy + railHeight, 0);
-
-        for (let z = -10.0; z <= 10.0; z += 3.3) {
-          const post = this.addMeshWithEdges(propsGroup, postGeom, this.craneMat, InkShaderMaterial.craneColor, false);
-          post.position.set(-12.9, fy + railHeight * 0.5, z);
-        }
+        railRun(-12.9, fy, 0, 0, 20.0, 3.3);
       } else {
-        // Floor 3 connects to skybridge at z in [-1.6, 1.6].
-        // Add railings on both sides of the bridge opening to prevent accidental walk-offs!
-        // North section: z from 1.6 to 10.0 (length 8.4m, center z = 5.8)
-        const northRailGeom = new THREE.BoxGeometry(0.08, 0.08, 8.4);
-        const northRail = this.addMeshWithEdges(propsGroup, northRailGeom, this.craneMat, InkShaderMaterial.craneColor, true);
-        northRail.position.set(-12.9, fy + railHeight, 5.8);
-
-        for (let z = 1.6; z <= 10.0; z += 2.8) {
-          const post = this.addMeshWithEdges(propsGroup, postGeom, this.craneMat, InkShaderMaterial.craneColor, false);
-          post.position.set(-12.9, fy + railHeight * 0.5, z);
-        }
-
-        // South section: z from -10.0 to -1.6 (length 8.4m, center z = -5.8)
-        const southRailGeom = new THREE.BoxGeometry(0.08, 0.08, 8.4);
-        const southRail = this.addMeshWithEdges(propsGroup, southRailGeom, this.craneMat, InkShaderMaterial.craneColor, true);
-        southRail.position.set(-12.9, fy + railHeight, -5.8);
-
-        for (let z = -10.0; z <= -1.6; z += 2.8) {
-          const post = this.addMeshWithEdges(propsGroup, postGeom, this.craneMat, InkShaderMaterial.craneColor, false);
-          post.position.set(-12.9, fy + railHeight * 0.5, z);
-        }
+        // Floor 3 connects to the skybridge at z in [-1.6, 1.6]: the opening stays
+        // clear, with a railed run on each side of it.
+        railRun(-12.9, fy, 5.8, 0, 8.4, 2.8);
+        railRun(-12.9, fy, -5.8, 0, 8.4, 2.8);
       }
     }
 

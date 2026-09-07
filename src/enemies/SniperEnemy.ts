@@ -224,7 +224,9 @@ export class SniperEnemy extends Enemy {
     // Line of sight check (throttled to every 0.15s, non-recursive for perf)
     this.muzzleSocket.getWorldPosition(this.tmpMuzzle);
 
-    this.tmpTarget.copy(playerPos); // Center chest (playerPos is capsule center)
+    // Chest aim: above a half-height rail standing, below it crouched.
+    this.tmpTarget.copy(playerPos);
+    this.tmpTarget.y = this.resolveAimY(playerPos);
     this.tmpDir.copy(this.tmpTarget).sub(this.tmpMuzzle);
     const targetDist = this.tmpDir.length();
 

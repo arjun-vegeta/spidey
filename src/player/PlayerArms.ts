@@ -17,9 +17,26 @@ export class PlayerArms {
   private leftPinkyFinger!: THREE.Mesh;
   private leftMiddleFingers!: THREE.Mesh;
 
+  /** Materials whose ink follows the local player's chosen colour. */
+  private tintable: THREE.ShaderMaterial[] = [];
+
   constructor() {
     this.webOriginMesh = new THREE.Object3D();
     this.buildSpiderManArms();
+  }
+
+  /**
+   * Re-inks the gloves in the local player's chosen colour, so the hands at
+   * the bottom of your own screen match the character everybody else sees you
+   * wearing. Geometry is unchanged — the arms are one rig for all eight
+   * designs — but the colour is the part you actually notice.
+   */
+  public setInk(hex: number): void {
+    const ink = new THREE.Color(hex);
+    for (const mat of this.tintable) {
+      mat.uniforms.uInkColor?.value.copy(ink);
+      mat.uniforms.uAccentColor?.value.copy(ink.clone().multiplyScalar(0.62));
+    }
   }
 
   private buildSpiderManArms(): void {
@@ -38,11 +55,14 @@ export class PlayerArms {
       uvScale: 2.0
     });
 
-    // Silver/metallic nozzle
+    // Silver/metallic nozzle. Left out of `tintable` on purpose: the nozzle
+    // reads as hardware, and hardware does not change colour with the suit.
     const metalMat = InkShaderMaterial.create({
       inkColor: new THREE.Color(0x2c3e50),
       useUv: true
     });
+
+    this.tintable.push(suitMat, gauntletMat);
 
     // ==========================================
     // 1. LEFT ARM (Web-Slinging Arm)

@@ -1423,3 +1423,1030 @@ body.in-game .notebook-lines-overlay {
   display: inline-block;
 }
 
+
+/* ==========================================================================
+   MULTIPLAYER — menu flow, lobby, and the deathmatch HUD.
+
+   Everything here reuses the notebook idiom already established above: cream
+   paper, hard ballpoint borders, offset ink shadows, no soft UI chrome.
+   ========================================================================== */
+
+/* ---- Menu overlay -------------------------------------------------------- */
+
+.menu-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 120;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  overflow-y: auto;
+  padding: 24px 12px;
+  background-color: var(--paper-cream);
+  background-image: linear-gradient(to bottom, rgba(122, 150, 212, 0.28) 1px, transparent 1px);
+  background-size: 100% 28px;
+  animation: menuInkFadeIn 0.35s ease-out;
+}
+
+.menu-card {
+  position: relative;
+  width: min(94vw, 720px);
+  padding: 26px 32px 24px;
+  border: 3px solid var(--ink-blue);
+  box-shadow: 8px 8px 0 var(--ink-blue), 12px 12px 0 rgba(214, 48, 49, 0.22);
+  background: var(--paper-cream);
+  text-align: center;
+  border-radius: 2px;
+  transform: rotate(-0.3deg);
+  margin: auto;
+}
+
+.menu-body {
+  margin-top: 6px;
+}
+
+/* ---- Identity row -------------------------------------------------------- */
+
+.menu-identity {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin: 14px 0 6px;
+  padding: 10px 14px;
+  border: 1.5px dashed var(--ink-blue);
+  background: rgba(122, 150, 212, 0.08);
+}
+
+.menu-identity-label {
+  font-size: 11px;
+  letter-spacing: 2px;
+  opacity: 0.75;
+}
+
+.menu-name-input {
+  font-family: var(--font-sketch);
+  font-size: 17px;
+  font-weight: 700;
+  letter-spacing: 1px;
+  color: var(--ink-blue);
+  background: var(--paper-cream);
+  border: none;
+  border-bottom: 2.5px solid var(--ink-blue);
+  padding: 3px 8px;
+  /* Wide enough for the full 14-character name cap without clipping. */
+  width: 15ch;
+  min-width: 190px;
+  text-align: center;
+  outline: none;
+  user-select: text;
+}
+
+.menu-name-input:focus {
+  border-bottom-color: var(--ink-red);
+  background: rgba(255, 255, 255, 0.5);
+}
+
+.menu-swatches {
+  display: flex;
+  gap: 6px;
+}
+
+.menu-swatch {
+  width: 20px;
+  height: 20px;
+  border: 2px solid var(--ink-blue);
+  border-radius: 50%;
+  cursor: pointer;
+  padding: 0;
+  transition: transform 0.12s ease-out;
+}
+
+.menu-swatch:hover {
+  transform: scale(1.18);
+}
+
+.menu-swatch.active {
+  box-shadow: 0 0 0 2px var(--paper-cream), 0 0 0 4px var(--ink-red);
+}
+
+/* ---- Choice cards -------------------------------------------------------- */
+
+.menu-choice-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 14px;
+  margin: 16px 0;
+}
+
+@media (max-width: 560px) {
+  .menu-choice-grid { grid-template-columns: 1fr; }
+}
+
+.menu-choice {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 18px 16px;
+  text-align: left;
+  font-family: var(--font-sketch);
+  color: var(--ink-blue);
+  background: var(--paper-cream);
+  border: 2.5px solid var(--ink-blue);
+  box-shadow: 4px 4px 0 rgba(21, 39, 120, 0.5);
+  cursor: pointer;
+  transition: transform 0.12s ease-out, box-shadow 0.12s ease-out;
+}
+
+.menu-choice:hover {
+  transform: translate(-2px, -2px);
+  box-shadow: 6px 6px 0 var(--ink-red);
+}
+
+.menu-choice-kicker {
+  font-size: 10px;
+  letter-spacing: 2px;
+  color: var(--ink-red);
+  font-weight: 900;
+}
+
+.menu-choice-title {
+  font-size: 22px;
+  font-weight: 900;
+  letter-spacing: 2px;
+}
+
+.menu-choice-blurb {
+  font-size: 12.5px;
+  line-height: 1.4;
+  opacity: 0.8;
+}
+
+/* ---- Buttons ------------------------------------------------------------- */
+
+.menu-btn {
+  font-family: var(--font-sketch);
+  font-size: 15px;
+  font-weight: 900;
+  letter-spacing: 2px;
+  padding: 11px 26px;
+  cursor: pointer;
+  border: 2.5px solid var(--ink-blue);
+  background: var(--paper-cream);
+  color: var(--ink-blue);
+  box-shadow: 4px 4px 0 rgba(21, 39, 120, 0.45);
+  transition: transform 0.1s ease-out, box-shadow 0.1s ease-out;
+  margin: 6px 5px 0;
+}
+
+.menu-btn:hover:not(:disabled) {
+  transform: translate(-2px, -2px);
+  box-shadow: 6px 6px 0 var(--ink-red);
+}
+
+.menu-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+  box-shadow: none;
+}
+
+.menu-btn-primary {
+  background: var(--ink-blue);
+  color: var(--paper-cream);
+}
+
+.menu-btn-ghost {
+  border-style: dashed;
+  box-shadow: none;
+  font-size: 12.5px;
+  padding: 8px 18px;
+}
+
+.menu-btn-small {
+  font-size: 11px;
+  padding: 6px 14px;
+}
+
+.menu-btn-huge {
+  font-size: 21px;
+  padding: 16px 44px;
+  margin-top: 14px;
+}
+
+/* ---- Shared bits --------------------------------------------------------- */
+
+.menu-section-title {
+  font-size: 11px;
+  font-weight: 900;
+  letter-spacing: 2.5px;
+  color: var(--ink-red);
+  margin: 14px 0 6px;
+  text-transform: uppercase;
+}
+
+.menu-note {
+  font-size: 12px;
+  line-height: 1.5;
+  opacity: 0.75;
+  margin: 8px auto;
+  max-width: 52ch;
+}
+
+.menu-error {
+  font-size: 12.5px;
+  color: var(--ink-red);
+  font-weight: 700;
+  min-height: 18px;
+  margin: 6px 0;
+}
+
+.menu-error-block {
+  padding: 12px;
+  border: 2px dashed var(--ink-red);
+  margin: 14px 0;
+}
+
+.menu-waiting {
+  font-size: 13px;
+  letter-spacing: 2px;
+  color: var(--ink-blue);
+  opacity: 0.8;
+  padding: 12px;
+  animation: mpWaitPulse 1.6s ease-in-out infinite;
+}
+
+@keyframes mpWaitPulse {
+  0%, 100% { opacity: 0.45; }
+  50%      { opacity: 0.95; }
+}
+
+.menu-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  align-items: center;
+  gap: 4px;
+  margin-top: 16px;
+}
+
+/* ---- Room code ----------------------------------------------------------- */
+
+.menu-code-input {
+  font-family: var(--font-sketch);
+  font-size: 40px;
+  font-weight: 900;
+  letter-spacing: 14px;
+  text-align: center;
+  text-indent: 14px; /* offsets the trailing letter-space so it reads centred */
+  text-transform: uppercase;
+  color: var(--ink-blue);
+  background: rgba(255, 255, 255, 0.45);
+  border: 3px dashed var(--ink-blue);
+  padding: 12px 10px;
+  width: min(100%, 400px);
+  outline: none;
+  user-select: text;
+}
+
+.menu-code-input:focus {
+  border-color: var(--ink-red);
+  border-style: solid;
+}
+
+.menu-code-block {
+  border: 2.5px solid var(--ink-blue);
+  background: rgba(122, 150, 212, 0.1);
+  padding: 12px;
+  margin: 10px 0 4px;
+}
+
+.menu-code-value {
+  font-size: clamp(38px, 8vw, 56px);
+  font-weight: 900;
+  letter-spacing: 12px;
+  text-indent: 12px;
+  color: var(--ink-blue);
+  user-select: all;
+  line-height: 1.1;
+}
+
+/* ---- Lobby roster -------------------------------------------------------- */
+
+/*
+ * Two columns, because a full room is eight players and a single column of
+ * eight would either scroll (hiding people behind an invisible scrollbar) or
+ * push the START button off a laptop screen.
+ */
+.menu-roster {
+  list-style: none;
+  text-align: left;
+  border: 1.5px dashed var(--ink-blue);
+  padding: 6px 12px;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  column-gap: 18px;
+}
+
+@media (max-width: 520px) {
+  .menu-roster { grid-template-columns: 1fr; }
+}
+
+.menu-roster-row {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 6px 2px;
+  border-bottom: 1px dotted rgba(21, 39, 120, 0.25);
+  font-size: 14px;
+}
+
+.menu-roster-row:last-child,
+.menu-roster-row:nth-last-child(2):nth-child(odd) {
+  border-bottom: none;
+}
+
+.menu-roster-dot {
+  width: 13px;
+  height: 13px;
+  border-radius: 50%;
+  border: 2px solid var(--ink-blue);
+  flex: 0 0 auto;
+}
+
+.menu-roster-name {
+  /* Does not grow: the crown has to sit against the last character, not get
+     shoved to the far edge of the column. */
+  flex: 0 1 auto;
+  font-weight: 700;
+  letter-spacing: 0.6px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.menu-roster-crown {
+  flex: 0 0 auto;
+  /* Soaks up the leftover width so name + crown stay together on the left. */
+  margin-right: auto;
+  display: inline-flex;
+  align-items: center;
+  width: 15px;
+  color: var(--ink-red);
+}
+
+.menu-roster-crown svg {
+  width: 15px;
+  height: 12px;
+  display: block;
+  /* Nothing on this page sits perfectly square; the crown leans like the rest. */
+  transform: rotate(15deg);
+}
+
+/* Inline validation on the name field. */
+.menu-name-input.invalid {
+  border-bottom-color: var(--ink-red);
+  color: var(--ink-red);
+}
+
+.menu-name-hint {
+  font-size: 10.5px;
+  letter-spacing: 1px;
+  color: var(--ink-red);
+  width: 100%;
+  text-align: center;
+}
+
+/* Reserves no vertical space until it actually has something to say. */
+.menu-name-hint:empty {
+  display: none;
+}
+
+.menu-roster-row.is-self .menu-roster-name {
+  font-weight: 900;
+  text-decoration: underline;
+  text-decoration-style: dotted;
+  text-underline-offset: 3px;
+}
+
+/* ---- Match rules --------------------------------------------------------- */
+
+.menu-rules {
+  margin-top: 8px;
+}
+
+.menu-rule-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding: 5px 0;
+}
+
+.menu-rule-label {
+  font-size: 11px;
+  letter-spacing: 2px;
+  opacity: 0.8;
+}
+
+.menu-rule-options {
+  display: flex;
+  gap: 5px;
+}
+
+.menu-pill {
+  font-family: var(--font-sketch);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 1px;
+  padding: 5px 12px;
+  border: 2px solid var(--ink-blue);
+  background: var(--paper-cream);
+  color: var(--ink-blue);
+  cursor: pointer;
+}
+
+.menu-pill.active {
+  background: var(--ink-blue);
+  color: var(--paper-cream);
+}
+
+.menu-pill:disabled {
+  cursor: default;
+  opacity: 0.55;
+}
+
+.menu-pill.active:disabled {
+  opacity: 1;
+}
+
+/*
+ * SHORT SCREENS.
+ *
+ * A full eight-player lobby is the tallest thing this menu ever draws, and
+ * laptops at 768px (and browser chrome eating ~120px of that) are ordinary.
+ * These tiers shed vertical space progressively rather than letting the card
+ * scroll, because a scrolled lobby hides the START button.
+ */
+@media (max-height: 860px) {
+  .menu-card { padding: 16px 28px 16px; }
+  .menu-code-value { font-size: clamp(30px, 6vw, 40px); letter-spacing: 10px; text-indent: 10px; }
+  .menu-code-block { padding: 7px; margin: 6px 0 2px; }
+  .menu-identity { margin: 9px 0 4px; padding: 7px 12px; }
+  .menu-section-title { margin: 9px 0 4px; }
+  .menu-choice { padding: 13px 15px; }
+  .menu-actions { margin-top: 10px; }
+  .instructions-title { font-size: clamp(22px, 3vw, 27px); }
+  .instructions-subtitle { margin-bottom: 8px; }
+}
+
+/* Starts at 800px, not 720px: the light tier's card is ~741px tall, so
+   anything under ~750px viewport needs this one. */
+@media (max-height: 800px) {
+  .menu-card { padding: 12px 24px 13px; }
+  /* The subtitle is pure decoration; the title already says what this is. */
+  .instructions-subtitle { display: none; }
+  .modal-tape { display: none; }
+  .instructions-title { font-size: 22px; margin-bottom: 0; }
+  .menu-code-value { font-size: 32px; letter-spacing: 8px; text-indent: 8px; }
+  .menu-roster-row { padding: 3px 2px; font-size: 13px; }
+  .menu-rule-row { padding: 3px 0; }
+  .menu-btn { padding: 9px 22px; margin-top: 4px; }
+  .menu-note { margin: 5px auto; }
+  .menu-choice-blurb { font-size: 12px; }
+}
+
+/* Raised from 620px: the character picker made the lobby taller, and 660px
+   (a 768px laptop minus browser chrome) was overflowing by a few pixels. */
+@media (max-height: 700px) {
+  .menu-overlay { padding: 8px; align-items: flex-start; }
+  .menu-card { padding: 10px 20px 11px; transform: none; }
+  .modal-stamp { display: none; }
+  .modal-badge { display: none; }
+  .instructions-title { font-size: 19px; letter-spacing: 1.5px; }
+  .menu-identity { margin: 6px 0 2px; padding: 5px 10px; gap: 7px; }
+  .menu-name-input { font-size: 15px; }
+  .menu-swatch { width: 16px; height: 16px; }
+  .menu-code-block { padding: 4px; }
+  .menu-code-value { font-size: 26px; letter-spacing: 6px; text-indent: 6px; }
+  .menu-section-title { margin: 6px 0 3px; font-size: 10px; }
+  .menu-roster { padding: 3px 10px; }
+  .menu-roster-row { padding: 2px; font-size: 12.5px; }
+  .menu-pill { padding: 3px 10px; font-size: 11px; }
+  .menu-btn { padding: 7px 18px; font-size: 13.5px; }
+  .menu-btn-huge { font-size: 17px; padding: 12px 32px; }
+  .menu-choice { padding: 10px 13px; }
+  .menu-choice-title { font-size: 18px; }
+  .menu-dropin-title { font-size: 24px; margin-top: 8px; }
+}
+
+.menu-dropin-title {
+  font-size: clamp(26px, 5vw, 38px);
+  font-weight: 900;
+  letter-spacing: 4px;
+  color: var(--ink-red);
+  margin-top: 18px;
+}
+
+/* ==========================================================================
+   IN-MATCH HUD
+   ========================================================================== */
+
+.mp-hud {
+  position: absolute;
+  inset: 0;
+  z-index: 60;
+  pointer-events: none;
+  font-family: var(--font-sketch);
+  color: var(--ink-blue);
+}
+
+/* The wave/enemies readout is meaningless in PvP; the match status replaces it. */
+body.mp-mode .hud-top-right { display: none !important; }
+
+.mp-status {
+  position: absolute;
+  top: 12px;
+  left: 50%;
+  transform: translateX(-50%);
+  font-size: 13px;
+  font-weight: 900;
+  letter-spacing: 2px;
+  padding: 5px 16px;
+  border: 2px solid var(--ink-blue);
+  background: rgba(245, 238, 221, 0.82);
+  white-space: nowrap;
+}
+
+.mp-status.urgent {
+  color: var(--ink-red);
+  border-color: var(--ink-red);
+  animation: mpUrgent 1s steps(2, end) infinite;
+}
+
+@keyframes mpUrgent {
+  0%, 100% { opacity: 1; }
+  50%      { opacity: 0.55; }
+}
+
+/* ---- Kill feed ----------------------------------------------------------- */
+
+.mp-feed {
+  position: absolute;
+  top: 52px;
+  right: 16px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 4px;
+}
+
+.mp-feed-row {
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  padding: 3px 10px;
+  background: rgba(245, 238, 221, 0.85);
+  border-left: 3px solid var(--ink-blue);
+  transition: opacity 0.2s linear;
+  white-space: nowrap;
+}
+
+.mp-feed-row.mine {
+  border-left-color: var(--ink-red);
+  background: rgba(255, 232, 232, 0.9);
+}
+
+.mp-feed-verb {
+  opacity: 0.65;
+  font-weight: 900;
+}
+
+/* ---- Scoreboard ---------------------------------------------------------- */
+
+.mp-board {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+}
+
+.mp-board-card {
+  min-width: min(90vw, 420px);
+  padding: 18px 22px;
+  background: var(--paper-cream);
+  border: 3px solid var(--ink-blue);
+  box-shadow: 7px 7px 0 rgba(21, 39, 120, 0.45);
+  transform: rotate(-0.4deg);
+}
+
+.mp-board-title {
+  font-size: 15px;
+  font-weight: 900;
+  letter-spacing: 4px;
+  text-align: center;
+  color: var(--ink-red);
+  margin-bottom: 10px;
+}
+
+.mp-board-head,
+.mp-board-row {
+  display: grid;
+  grid-template-columns: 1fr 42px 42px;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 2px;
+}
+
+.mp-board-head {
+  font-size: 10px;
+  letter-spacing: 2px;
+  opacity: 0.7;
+  border-bottom: 2px solid var(--ink-blue);
+}
+
+.mp-board-row {
+  border-bottom: 1px dotted rgba(21, 39, 120, 0.25);
+  font-size: 14px;
+}
+
+.mp-board-row.self {
+  font-weight: 900;
+  background: rgba(122, 150, 212, 0.16);
+}
+
+.mp-board-row.down {
+  opacity: 0.45;
+  font-style: italic;
+}
+
+.mp-col-name {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mp-col-num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.mp-dot {
+  width: 11px;
+  height: 11px;
+  border-radius: 50%;
+  border: 2px solid var(--ink-blue);
+  flex: 0 0 auto;
+}
+
+.mp-board-foot {
+  text-align: center;
+  font-size: 10px;
+  letter-spacing: 2px;
+  opacity: 0.55;
+  margin-top: 8px;
+}
+
+/* ---- Respawn ------------------------------------------------------------- */
+
+.mp-respawn {
+  position: absolute;
+  inset: 0;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  gap: 4px;
+  background: rgba(214, 48, 49, 0.1);
+}
+
+.mp-respawn-title {
+  font-size: clamp(34px, 7vw, 58px);
+  font-weight: 900;
+  letter-spacing: 7px;
+  color: var(--ink-red);
+}
+
+.mp-respawn-by {
+  font-size: 15px;
+  letter-spacing: 1.5px;
+  opacity: 0.85;
+}
+
+.mp-respawn-count {
+  font-size: clamp(46px, 10vw, 82px);
+  font-weight: 900;
+  color: var(--ink-blue);
+  line-height: 1;
+  margin-top: 6px;
+}
+
+/* ---- End of match -------------------------------------------------------- */
+
+.mp-end {
+  position: absolute;
+  inset: 0;
+  justify-content: center;
+  align-items: center;
+  pointer-events: auto;
+  overflow-y: auto;
+  padding: 20px 12px;
+  background-color: rgba(245, 238, 221, 0.96);
+  background-image: linear-gradient(to bottom, rgba(122, 150, 212, 0.28) 1px, transparent 1px);
+  background-size: 100% 28px;
+}
+
+.mp-end-card {
+  position: relative;
+  width: min(94vw, 620px);
+  padding: 26px 30px 22px;
+  background: var(--paper-cream);
+  border: 3px solid var(--ink-blue);
+  box-shadow: 8px 8px 0 var(--ink-blue), 12px 12px 0 rgba(214, 48, 49, 0.22);
+  text-align: center;
+  transform: rotate(-0.3deg);
+  margin: auto;
+}
+
+.mp-end-title {
+  font-size: clamp(24px, 5vw, 32px);
+  font-weight: 900;
+  letter-spacing: 4px;
+  margin-bottom: 4px;
+}
+
+.mp-end-winner {
+  font-size: clamp(18px, 4vw, 24px);
+  font-weight: 900;
+  letter-spacing: 2px;
+  margin-bottom: 14px;
+}
+
+.mp-end-table {
+  border: 1.5px dashed var(--ink-blue);
+  padding: 4px 12px;
+  text-align: left;
+}
+
+.mp-end-row {
+  display: grid;
+  grid-template-columns: 30px 1fr 58px 58px 58px;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 2px;
+  border-bottom: 1px dotted rgba(21, 39, 120, 0.25);
+  font-size: 14px;
+}
+
+.mp-end-row:last-child { border-bottom: none; }
+
+.mp-end-head {
+  font-size: 10px;
+  letter-spacing: 2px;
+  opacity: 0.7;
+  border-bottom: 2px solid var(--ink-blue);
+}
+
+.mp-end-row.self {
+  font-weight: 900;
+  background: rgba(122, 150, 212, 0.16);
+}
+
+.mp-end-rank {
+  font-weight: 900;
+  color: var(--ink-red);
+}
+
+.mp-end-name {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mp-end-num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.mp-end-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  align-items: center;
+  gap: 6px;
+  margin-top: 18px;
+}
+
+/* ---- Character button on the identity row -------------------------------- */
+
+.menu-charbtn {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-family: var(--font-sketch);
+  font-size: 12px;
+  letter-spacing: 1.2px;
+  color: var(--ink-blue);
+  background: var(--paper-cream);
+  border: 2px solid var(--ink-blue);
+  padding: 5px 10px;
+  cursor: pointer;
+  transition: transform 0.12s ease-out;
+}
+
+.menu-charbtn:hover {
+  transform: translate(-1px, -1px);
+  box-shadow: 2px 2px 0 var(--ink-blue);
+}
+
+.menu-charbtn-dot {
+  width: 12px;
+  height: 12px;
+  border: 1.5px solid var(--ink-blue);
+  border-radius: 50%;
+}
+
+.menu-charbtn-hint {
+  font-size: 9px;
+  letter-spacing: 1.6px;
+  opacity: 0.6;
+  border-left: 1px dashed var(--ink-blue);
+  padding-left: 8px;
+}
+
+.menu-roster-char {
+  font-size: 9.5px;
+  letter-spacing: 1.4px;
+  opacity: 0.6;
+  margin-left: auto;
+  padding-right: 8px;
+  white-space: nowrap;
+}
+
+/* ---- Character select ---------------------------------------------------- */
+
+.charpick {
+  display: grid;
+  grid-template-columns: 168px 1fr;
+  grid-template-areas: "list stage" "card card";
+  gap: 12px;
+  margin: 12px 0 4px;
+  text-align: left;
+}
+
+@media (min-width: 900px) {
+  .charpick {
+    grid-template-columns: 168px 1fr 220px;
+    grid-template-areas: "list stage card";
+  }
+}
+
+.charpick-list {
+  grid-area: list;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.charpick-row {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  font-family: var(--font-sketch);
+  text-align: left;
+  color: var(--ink-blue);
+  background: transparent;
+  border: 1.5px solid transparent;
+  border-left: 4px solid rgba(21, 39, 120, 0.35);
+  padding: 6px 8px;
+  cursor: pointer;
+}
+
+.charpick-row:hover {
+  background: rgba(21, 39, 120, 0.07);
+}
+
+.charpick-row.active {
+  background: rgba(21, 39, 120, 0.12);
+  border-color: var(--ink-blue);
+  border-left-color: var(--ink-red);
+}
+
+.charpick-row-name {
+  font-size: 12px;
+  letter-spacing: 0.8px;
+}
+
+.charpick-row-build {
+  font-size: 9px;
+  letter-spacing: 1.4px;
+  opacity: 0.6;
+}
+
+.charpick-stage {
+  grid-area: stage;
+  position: relative;
+  min-height: 260px;
+  border: 1.5px dashed var(--ink-blue);
+  background: var(--paper-cream);
+  overflow: hidden;
+}
+
+.charpick-canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.charpick-swatches {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 8px;
+  display: flex;
+  justify-content: center;
+  gap: 6px;
+}
+
+.charpick-card {
+  grid-area: card;
+  border-top: 1.5px dashed var(--ink-blue);
+  padding-top: 8px;
+}
+
+@media (min-width: 900px) {
+  .charpick-card {
+    border-top: none;
+    border-left: 1.5px dashed var(--ink-blue);
+    padding: 0 0 0 12px;
+  }
+}
+
+.charpick-card-slot {
+  font-size: 9px;
+  letter-spacing: 1.8px;
+  opacity: 0.55;
+}
+
+.charpick-card-name {
+  font-family: var(--font-sketch);
+  font-size: 16px;
+  letter-spacing: 0.6px;
+  margin: 3px 0 2px;
+  color: var(--ink, var(--ink-blue));
+}
+
+.charpick-card-tagline {
+  font-size: 9.5px;
+  letter-spacing: 1.2px;
+  opacity: 0.7;
+  margin: 0 0 8px;
+}
+
+.charpick-card-bio {
+  font-family: 'Courier Prime', monospace;
+  font-size: 11px;
+  line-height: 1.55;
+  margin: 0;
+}
+
+.charpick-stats {
+  margin: 10px 0 0;
+  padding: 8px 0 0;
+  border-top: 1px dashed rgba(21, 39, 120, 0.45);
+}
+
+.charpick-stats div {
+  display: grid;
+  grid-template-columns: 74px 1fr;
+  gap: 6px;
+  margin-bottom: 5px;
+}
+
+.charpick-stats dt {
+  font-size: 9px;
+  letter-spacing: 1.3px;
+  opacity: 0.55;
+}
+
+.charpick-stats dd {
+  margin: 0;
+  font-size: 10.5px;
+  letter-spacing: 0.6px;
+  color: var(--ink, var(--ink-blue));
+}
+
+.charpick-foot {
+  margin: 10px 0 0;
+  font-size: 8.5px;
+  letter-spacing: 1.1px;
+  opacity: 0.5;
+  line-height: 1.5;
+}

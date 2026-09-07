@@ -3,6 +3,7 @@ import { InkShaderMaterial } from '../shaders/InkShaderMaterial';
 import { ConstructionSite } from './ConstructionSite';
 import { WebAnchor } from '../player/SwingPhysics';
 import { WorldCollider } from './WorldCollider';
+import { COVER_RAIL_HEIGHT } from '../core/CoverMetrics';
 import { LANDABLE_TRIM } from './LandableTrim';
 
 export { LANDABLE_TRIM } from './LandableTrim';
@@ -456,11 +457,14 @@ export class CityBuilder {
     // Street slab top at y=0.5 across the playable area
     coll.addBoxCoords(-260, -2, -260, 260, 0.5, 260, 'floor');
 
-    // Parapet ring: 1.2m rails around a roof rect so edges block like rails.
+    // Parapet ring: half-height (0.9m) rails around a roof rect so edges block
+    // like rails and read as cover. Only ever registered where a matching
+    // COVER_RAIL_HEIGHT parapet mesh is actually drawn (top roofs) - never on
+    // bare ledges, which stay open so you can walk off.
     // gapEast leaves the skybridge dock entry open (matches the visual rail gap).
     const parapetRing = (cx: number, cz: number, w: number, d: number, topY: number, gapEast: boolean = false): void => {
       const t = 0.35;
-      const h = 1.2;
+      const h = COVER_RAIL_HEIGHT;
       coll.addBoxCoords(cx - w / 2, topY, cz + d / 2 - t, cx + w / 2, topY + h, cz + d / 2, 'wall');
       coll.addBoxCoords(cx - w / 2, topY, cz - d / 2, cx + w / 2, topY + h, cz - d / 2 + t, 'wall');
       if (gapEast) {
@@ -487,7 +491,9 @@ export class CityBuilder {
         // Lower tier walls + walkable terrace ring on its roof
         coll.addBoxCoords(c.x - hw, 0, c.z - hd, c.x + hw, sh, c.z + hd, 'wall');
         coll.addBoxCoords(c.x - hw, sh - 0.2, c.z - hd, c.x + hw, sh, c.z + hd, 'floor');
-        parapetRing(c.x, c.z, c.width, c.depth, sh);
+        // No parapet ring here: the setback terrace has no railing mesh, only a flat
+        // landable trim strip, so an edge shell would read as an invisible wall.
+        // The terrace edge is open - walk off it and fall.
         // Upper tier walls + roof
         coll.addBoxCoords(c.x - rw, sh, c.z - rd, c.x + rw, c.height, c.z + rd, 'wall');
         coll.addBoxCoords(c.x - rw, c.height - 0.2, c.z - rd, c.x + rw, c.height, c.z + rd, 'floor');
@@ -588,7 +594,7 @@ export class CityBuilder {
         const zA = ascendingPlusZ ? -3.5 + k * 0.9 : 5.5 - (k + 1) * 0.9;
         coll.addBoxCoords(posX - 1.2, top - 1.0, zA, posX + 1.2, top, zA + 0.9, 'floor');
       }
-      coll.addBoxCoords(posX + 1.2, bottomY, -3.5, posX + 1.38, bottomY + 6.1, 5.5, 'wall');
+      coll.addBoxCoords(posX + 1.2, bottomY, -3.5, posX + 1.38, bottomY + 5.0 + COVER_RAIL_HEIGHT, 5.5, 'wall');
       const topY = bottomY + 5.0;
       const lz = ascendingPlusZ ? 5.5 : -3.5;
       coll.addBoxCoords(6.5, topY - 0.2, lz - 1.5, 10.5, topY + 0.2, lz + 1.5, 'floor');
@@ -645,15 +651,32 @@ export class CityBuilder {
       coll.addBoxCoords(cx - hs, cy + cs - 0.2, cz - hs, cx + hs, cy + cs, cz + hs, 'floor');
     }
 
+    // Construction site perimeter guardrail shells, floors 1-4. These match the
+    // solid rail panels drawn in ConstructionSite.buildProps(): half-character
+    // walls that block walk-offs, stop enemy bullets, and eat the player's own
+    // shots when crouched behind them. Floor 3's west run splits around the
+    // skybridge opening (z -1.6..1.6), which stays clear.
+    for (const floor of [1, 2, 3, 4]) {
+      const fy = floor * 5.0 + 0.5;
+      const railTop = fy + COVER_RAIL_HEIGHT;
+      // South edge (z = -10.9, x -12..5)
+      coll.addBoxCoords(-12.0, fy, -11.0, 5.0, railTop, -10.8, 'wall');
+      // West edge (x = -12.9)
+      if (floor !== 3) {
+        coll.addBoxCoords(-13.0, fy, -10.0, -12.8, railTop, 10.0, 'wall');
+      }
+    }
+
     // Skybridge deck floor shell (-41 to -13 at y=15.0..15.4)
     coll.addBoxCoords(-41, 15.0, -1.6, -13, 15.4, 1.6, 'floor');
-    // Skybridge side railings (North & South)
-    coll.addBoxCoords(-41, 15.4, -1.65, -13, 16.6, -1.45, 'wall');
-    coll.addBoxCoords(-41, 15.4, 1.45, -13, 16.6, 1.65, 'wall');
+    // Skybridge side railings (North & South): solid to COVER_RAIL_HEIGHT so a
+    // crouched player is fully behind them and bullets stop in the panel.
+    coll.addBoxCoords(-41, 15.4, -1.65, -13, 15.4 + COVER_RAIL_HEIGHT, -1.45, 'wall');
+    coll.addBoxCoords(-41, 15.4, 1.45, -13, 15.4 + COVER_RAIL_HEIGHT, 1.65, 'wall');
 
     // Construction site Floor 3 West railings (north and south of bridge opening)
-    coll.addBoxCoords(-13.1, 15.5, 1.6, -12.8, 16.6, 10.0, 'wall');
-    coll.addBoxCoords(-13.1, 15.5, -10.0, -12.8, 16.6, -1.6, 'wall');
+    coll.addBoxCoords(-13.1, 15.5, 1.6, -12.8, 15.5 + COVER_RAIL_HEIGHT, 10.0, 'wall');
+    coll.addBoxCoords(-13.1, 15.5, -10.0, -12.8, 15.5 + COVER_RAIL_HEIGHT, -1.6, 'wall');
 
     // Skybridge dock steps: 5 walkable 0.5m rises inside the entry notch
     // (world x -45.4..-41.0 at z +/-1.8). Step k center: -41.4 - 0.8k.
@@ -700,16 +723,26 @@ export class CityBuilder {
     }
 
     // Balcony shells: standable floors + leanable outer rails
+    // Every balcony gets three rail shells, matching the three rail meshes the
+    // balcony builders draw: the outer rail plus BOTH side rails. The sides were
+    // previously mesh-only, so players walked straight off through them.
+    // The fourth edge is the building facade, already solid.
     for (const b of this.balconySpecs) {
       coll.addBoxCoords(b.cx - b.hw, b.cy - 0.3, b.cz - b.hd, b.cx + b.hw, b.cy, b.cz + b.hd, 'floor');
-      // Outer rail strip (1.1m tall, thin, on the outward edge)
       const t = 0.15;
+      const railTop = b.cy + COVER_RAIL_HEIGHT;
       if (b.nx !== 0) {
+        // Faces +/-x: the balcony juts along x, so the sides run along x at z = cz +/- hd
         const rx = b.nx > 0 ? b.cx + b.hw - t : b.cx - b.hw;
-        coll.addBoxCoords(Math.min(rx, rx + t), b.cy, b.cz - b.hd, Math.max(rx, rx + t), b.cy + 1.1, b.cz + b.hd, 'wall');
+        coll.addBoxCoords(rx, b.cy, b.cz - b.hd, rx + t, railTop, b.cz + b.hd, 'wall');
+        coll.addBoxCoords(b.cx - b.hw, b.cy, b.cz - b.hd, b.cx + b.hw, railTop, b.cz - b.hd + t, 'wall');
+        coll.addBoxCoords(b.cx - b.hw, b.cy, b.cz + b.hd - t, b.cx + b.hw, railTop, b.cz + b.hd, 'wall');
       } else {
+        // Faces +/-z: the balcony juts along z, so the sides run along z at x = cx +/- hw
         const rz = b.nz > 0 ? b.cz + b.hd - t : b.cz - b.hd;
-        coll.addBoxCoords(b.cx - b.hw, b.cy, Math.min(rz, rz + t), b.cx + b.hw, b.cy + 1.1, Math.max(rz, rz + t), 'wall');
+        coll.addBoxCoords(b.cx - b.hw, b.cy, rz, b.cx + b.hw, railTop, rz + t, 'wall');
+        coll.addBoxCoords(b.cx - b.hw, b.cy, b.cz - b.hd, b.cx - b.hw + t, railTop, b.cz + b.hd, 'wall');
+        coll.addBoxCoords(b.cx + b.hw - t, b.cy, b.cz - b.hd, b.cx + b.hw, railTop, b.cz + b.hd, 'wall');
       }
     }
 
@@ -725,6 +758,14 @@ export class CityBuilder {
 
     coll.finalize();
     this.worldCollider = coll;
+  }
+
+  /**
+   * Read-only snapshot of every balcony platform (world centre, half extents and
+   * outward normal). Exposed so tests can audit that each one is railed in.
+   */
+  public getBalconySpecs(): Array<{ cx: number; cy: number; cz: number; hw: number; hd: number; nx: number; nz: number }> {
+    return this.balconySpecs.map((b) => ({ ...b }));
   }
 
   public getWorldCollider(): WorldCollider {
@@ -854,7 +895,7 @@ export class CityBuilder {
     const groundY = 0.6;
     const secondFloorY = 5.2;
     const roofY = 9.8;
-    const parapetY = 11.0;
+    const parapetY = 9.8 + COVER_RAIL_HEIGHT; // roof slab top + half-character rail
     const wallH = roofY - groundY; // 9.2m
     const wallThick = 0.45;
     const halfThick = wallThick * 0.5;
@@ -1068,9 +1109,9 @@ export class CityBuilder {
       // Balustrade posts on left (x = -2.5) and right (x = 2.5) every 3 steps
       if (i % 3 === 0 || i === stair1Steps - 1) {
         for (const sideX of [stair1X1, stair1X2]) {
-          const postGeom = new THREE.BoxGeometry(0.12, 0.95, 0.12);
+          const postGeom = new THREE.BoxGeometry(0.12, COVER_RAIL_HEIGHT, 0.12);
           const post = this.addMeshWithEdges(depotGroup, postGeom, this.metalMat, brassInkColor, false);
-          post.position.set(sideX, stepTopY + 0.475, stepZMid);
+          post.position.set(sideX, stepTopY + COVER_RAIL_HEIGHT * 0.5, stepZMid);
         }
       }
     }
@@ -1078,16 +1119,17 @@ export class CityBuilder {
     // Solid back wall under the stairs enclosing the ground-floor under-stair volume
     addBoxPiece(stair1X1, groundY, -56.15, stair1X2, 4.8, -56.0, depotInteriorWallMat, 'wall');
 
-    // Solid side balustrade walls along left and right of Grand Staircase (prevents falling off side)
-    addBoxPiece(stair1X1 - 0.1, groundY, -55.6, stair1X1 + 0.05, secondFloorY + 1.1, -48.0, this.metalMat, 'wall');
-    addBoxPiece(stair1X2 - 0.05, groundY, -55.6, stair1X2 + 0.1, secondFloorY + 1.1, -48.0, this.metalMat, 'wall');
+    // Solid side balustrade walls along left and right of Grand Staircase (prevents falling off side).
+    // Tops out half a character above the upper landing, same as every other rail.
+    addBoxPiece(stair1X1 - 0.1, groundY, -55.6, stair1X1 + 0.05, secondFloorY + COVER_RAIL_HEIGHT, -48.0, this.metalMat, 'wall');
+    addBoxPiece(stair1X2 - 0.05, groundY, -55.6, stair1X2 + 0.1, secondFloorY + COVER_RAIL_HEIGHT, -48.0, this.metalMat, 'wall');
 
     // Continuous handrail tubes on both sides
     for (const sideX of [stair1X1, stair1X2]) {
       const railGeom = new THREE.BoxGeometry(0.12, 0.12, 8.2);
       railGeom.rotateX(-Math.atan2(secondFloorY - groundY, 8.0));
       const railMesh = this.addMeshWithEdges(depotGroup, railGeom, this.trimMat, brassInkColor, false);
-      railMesh.position.set(sideX, (groundY + secondFloorY) * 0.5 + 0.95, -52.0);
+      railMesh.position.set(sideX, (groundY + secondFloorY) * 0.5 + COVER_RAIL_HEIGHT, -52.0);
     }
 
     // --- 7. Second Floor Mezzanine Promenade (y = 5.2, slab thickness 0.4, y: 4.8..5.2) ---
@@ -1105,23 +1147,24 @@ export class CityBuilder {
     addBoxPiece(5.0, 4.8, -57.6, 8.5, secondFloorY, -52.0, this.sidewalkMat, 'floor');
     // (Notice: NE stair hole x: 8.5..11.8, z: -57.6..-52.0 is left open for the roof staircase!)
 
-    // Solid Mezzanine Balustrades (1.1m high solid walls overlooking central atrium void)
+    // Solid Mezzanine Balustrades (half-character-high solid walls overlooking the atrium void:
+    // shoot over them standing, take cover behind them crouched)
     // Along West edge of void: x = -5.0, z: -55.5..-43.0
-    addBoxPiece(-5.1, secondFloorY, -55.5, -4.9, secondFloorY + 1.1, -43.0, this.metalMat, 'wall');
+    addBoxPiece(-5.1, secondFloorY, -55.5, -4.9, secondFloorY + COVER_RAIL_HEIGHT, -43.0, this.metalMat, 'wall');
     // Along East edge of void: x = +5.0, z: -55.5..-43.0
-    addBoxPiece(4.9, secondFloorY, -55.5, 5.1, secondFloorY + 1.1, -43.0, this.metalMat, 'wall');
+    addBoxPiece(4.9, secondFloorY, -55.5, 5.1, secondFloorY + COVER_RAIL_HEIGHT, -43.0, this.metalMat, 'wall');
     // Along South edge of void: z = -43.0, x: -5.0..+5.0
-    addBoxPiece(-5.0, secondFloorY, -43.1, 5.0, secondFloorY + 1.1, -42.9, this.metalMat, 'wall');
+    addBoxPiece(-5.0, secondFloorY, -43.1, 5.0, secondFloorY + COVER_RAIL_HEIGHT, -42.9, this.metalMat, 'wall');
 
     // Visual handrail capping on mezzanine balustrades
     const capSGeom = new THREE.BoxGeometry(10.2, 0.08, 0.22);
     const capS = this.addMeshWithEdges(depotGroup, capSGeom, this.trimMat, brassInkColor, false);
-    capS.position.set(0, secondFloorY + 1.1, -43.0);
+    capS.position.set(0, secondFloorY + COVER_RAIL_HEIGHT, -43.0);
     const capLRGeom = new THREE.BoxGeometry(0.22, 0.08, 12.6);
     const capL = this.addMeshWithEdges(depotGroup, capLRGeom, this.trimMat, brassInkColor, false);
-    capL.position.set(-5.0, secondFloorY + 1.1, -49.25);
+    capL.position.set(-5.0, secondFloorY + COVER_RAIL_HEIGHT, -49.25);
     const capR = this.addMeshWithEdges(depotGroup, capLRGeom, this.trimMat, brassInkColor, false);
-    capR.position.set(5.0, secondFloorY + 1.1, -49.25);
+    capR.position.set(5.0, secondFloorY + COVER_RAIL_HEIGHT, -49.25);
 
     // --- 8. Second Floor NW Executive Map Room ---
     // Partition wall along z = -52.0 (x: -11.8..-5.0, h: 4.6, from y: 5.2 to 9.8)
@@ -1181,7 +1224,7 @@ export class CityBuilder {
     addBoxPiece(stair2X1, secondFloorY, -57.75, stair2X2, 9.4, -57.6, depotInteriorWallMat, 'wall');
 
     // Inner balustrade wall along inner side (x = 8.5) of NE Staircase along 2nd floor gallery
-    addBoxPiece(8.4, secondFloorY, -56.0, 8.55, secondFloorY + 1.1, -52.0, this.metalMat, 'wall');
+    addBoxPiece(8.4, secondFloorY, -56.0, 8.55, secondFloorY + COVER_RAIL_HEIGHT, -52.0, this.metalMat, 'wall');
 
     // --- 10. Solid Rooftop Slab & Perimeter Parapets (Roof level at y = 9.8) ---
     // Skylight opening: x: -4.5..4.5, z: -51.0..-44.0
@@ -1196,7 +1239,7 @@ export class CityBuilder {
     // 4) East roof flank: x: 4.5..12.0, z: -51.0..-44.0
     addBoxPiece(4.5, 9.4, -51.0, xMax, roofY, -44.0, this.roofMat, 'floor');
 
-    // Solid Perimeter Roof Parapet Walls (y: 9.8..11.0, h: 1.2m, thickness 0.4m)
+    // Solid Perimeter Roof Parapet Walls (h = COVER_RAIL_HEIGHT, thickness 0.4m)
     addBoxPiece(xMin, roofY, zMax - 0.4, xMax, parapetY, zMax, depotTrimMat, 'wall'); // South
     addBoxPiece(xMin, roofY, zMin, xMax, parapetY, zMin + 0.4, depotTrimMat, 'wall'); // North
     addBoxPiece(xMin, roofY, zMin, xMin + 0.4, parapetY, zMax, depotTrimMat, 'wall'); // West
@@ -1511,8 +1554,9 @@ export class CityBuilder {
       this.buildJulietBalconies(bGroup, config, config.julietRows);
     }
 
-    // Rooftop perimeter parapet wall (1.2m tall)
-    const parapetHeight = 1.2;
+    // Rooftop perimeter parapet wall: half a character tall, so you shoot over it
+    // standing and are fully covered by it crouched.
+    const parapetHeight = COVER_RAIL_HEIGHT;
     const parapetThick = 0.35;
     const halfRW = roofW * 0.5;
     const halfRD = roofD * 0.5;
@@ -1813,7 +1857,7 @@ export class CityBuilder {
     const hd = config.depth / 2;
     const alongW = 5.0;   // platform width along the face
     const outD = 2.2;     // platform depth outward
-    const railH = 1.1;
+    const railH = COVER_RAIL_HEIGHT;
     const railT = 0.12;
 
     let placed = 0;
@@ -2069,7 +2113,8 @@ export class CityBuilder {
    * Builds perimeter terrace railings for the Connected Adjacent Building
    */
   private buildTerracePerimeterRailing(parent: THREE.Group, roofW: number, roofD: number, roofY: number): void {
-    const railHeight = 1.1;
+    // Decorative handrail cap that sits exactly on the solid parapet's lip.
+    const railHeight = COVER_RAIL_HEIGHT;
     const halfW = roofW * 0.5;
     const halfD = roofD * 0.5;
 
@@ -2199,7 +2244,7 @@ export class CityBuilder {
     const hd = roofD * 0.5;
     const alongW = 4.6;
     const outD = 2.0;
-    const railH = 1.1;
+    const railH = COVER_RAIL_HEIGHT;
     const railT = 0.12;
 
     let placed = 0;
@@ -2278,7 +2323,7 @@ export class CityBuilder {
     nx: number,
     nz: number
   ): void {
-    const railH = 1.1;
+    const railH = COVER_RAIL_HEIGHT;
     const railT = 0.12;
     const sillY = floorY - 0.15;
 
@@ -2347,9 +2392,9 @@ export class CityBuilder {
         if (config.skybridgeDock && nx !== 0 && Math.abs(off) < 3) continue;
         const bx = nx * (hw + 0.05) + (nx !== 0 ? 0 : off);
         const bz = nz * (hd + 0.05) + (nz !== 0 ? 0 : off);
-        const railGeom = new THREE.BoxGeometry(nx !== 0 ? 0.1 : 2.2, 1.1, nx !== 0 ? 2.2 : 0.1);
+        const railGeom = new THREE.BoxGeometry(nx !== 0 ? 0.1 : 2.2, COVER_RAIL_HEIGHT, nx !== 0 ? 2.2 : 0.1);
         const rail = this.addMeshWithEdges(parent, railGeom, this.metalMat, InkShaderMaterial.defaultInkColor, true);
-        rail.position.set(bx, y + 0.55, bz);
+        rail.position.set(bx, y + COVER_RAIL_HEIGHT * 0.5, bz);
         const sillGeom = new THREE.BoxGeometry(nx !== 0 ? 0.5 : 2.4, 0.12, nx !== 0 ? 2.4 : 0.5);
         const sill = this.addMeshWithEdges(parent, sillGeom, this.roofMat, InkShaderMaterial.defaultInkColor, false);
         sill.position.set(bx, y, bz);

@@ -605,6 +605,7 @@ export class ThugEnemy extends Enemy {
       this.chaseLosTimer = 0.25;
       this.tmpMuzzle.set(this.group.position.x, this.group.position.y + 1.2, this.group.position.z);
       this.tmpAim.copy(playerPos);
+      this.tmpAim.y = this.resolveAimY(playerPos);
       if (this.worldCollider) {
         this.chaseLosClear = this.worldCollider.hasLineOfSight(this.tmpMuzzle, this.tmpAim);
       } else {
@@ -639,6 +640,7 @@ export class ThugEnemy extends Enemy {
       this.losTimer = 0.25;
       this.tmpMuzzle.set(this.group.position.x, this.group.position.y + 1.2, this.group.position.z);
       this.tmpAim.copy(playerPos);
+      this.tmpAim.y = this.resolveAimY(playerPos);
       if (this.worldCollider) {
         this.losClear = this.worldCollider.hasLineOfSight(this.tmpMuzzle, this.tmpAim);
       } else {
@@ -695,8 +697,10 @@ export class ThugEnemy extends Enemy {
   private fireBullet(playerPos: THREE.Vector3): void {
     this.muzzleSocket.getWorldPosition(this.tmpMuzzle);
 
-    // Aim toward player center/chest (playerPos is capsule center)
+    // Aim at the chest: above a half-height rail when the player stands,
+    // below it when they crouch (see core/CoverMetrics.ts).
     this.tmpAim.copy(playerPos);
+    this.tmpAim.y = this.resolveAimY(playerPos);
 
     // Dynamic combat spread scaled with player speed (inspired by inspiration's const sp = spread * (1 + P.speed * 0.06))
     const pSpeed = this.playerSpeed || 0;

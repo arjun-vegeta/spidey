@@ -487,19 +487,22 @@ describe('EnemyManager - projectile hitbox, anti-tunnel, separation', () => {
   });
 
   it('crouching ducks under chest-aimed fire that hits a standing player', () => {
+    // Chest-high shot for a standing player: 0.68 * 1.8m = 1.22m above the feet.
     const shot = () => ({
-      origin: new THREE.Vector3(0, 2.3, 0),
+      origin: new THREE.Vector3(0, 1.22, 0),
       direction: new THREE.Vector3(0, 0, 1),
       speed: 50, damage: 9, radius: 0.16, maxDistance: 60, isSniper: false, kind: 'thug' as const,
     });
+    // Feet on y = 0, so the capsule centre is half the stance height up.
     let standHits = 0;
     enemyManager.spawnProjectile(shot());
-    enemyManager.update(0.25, stubAt(0, 1.4, 10, 1.8, () => standHits++), undefined as unknown as THREE.PerspectiveCamera);
+    enemyManager.update(0.25, stubAt(0, 0.9, 10, 1.8, () => standHits++), undefined as unknown as THREE.PerspectiveCamera);
     expect(standHits).toBe(1);
 
+    // Crouched to 0.9m (rail height): the whole hitbox is below the shot.
     let crouchHits = 0;
     enemyManager.spawnProjectile(shot());
-    enemyManager.update(0.25, stubAt(0, 1.1, 10, 1.2, () => crouchHits++), undefined as unknown as THREE.PerspectiveCamera);
+    enemyManager.update(0.25, stubAt(0, 0.45, 10, 0.9, () => crouchHits++), undefined as unknown as THREE.PerspectiveCamera);
     expect(crouchHits).toBe(0);
   });
 

@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import * as THREE from 'three';
 import { SwingPhysics, MovementMode } from '../src/player/SwingPhysics';
+import { WorldCollider } from '../src/world/WorldCollider';
 
 describe('SwingPhysics - Realistic Pendulum Web Mechanics', () => {
   let physics: SwingPhysics;
@@ -283,7 +284,7 @@ describe('SwingPhysics - Realistic Pendulum Web Mechanics', () => {
     expect(crouchSpeed).toBeLessThanOrEqual(4.0);
   });
 
-  it('winching reels straight to the anchor and pops the line on arrival', () => {
+  it('winching builds speed along the line instead of snapping to it', () => {
     const anchor = new THREE.Vector3(0, 40, 0);
     physics.position.set(0, 20, 0);
     physics.velocity.set(5, 0, 0);
@@ -291,19 +292,71 @@ describe('SwingPhysics - Realistic Pendulum Web Mechanics', () => {
     expect(physics.mode).toBe(MovementMode.SWINGING);
 
     physics.winching = true;
-    physics.update(0.05, new THREE.Vector3(), new THREE.Vector3(0, 0, -1), false, false);
-    expect(physics.mode).toBe(MovementMode.SWINGING);
-    expect(physics.velocity.y).toBeGreaterThan(20);
+    const dt = 0.05;
+    physics.update(dt, new THREE.Vector3(), new THREE.Vector3(0, 0, -1), false, false);
+    // Constant-force motor: one frame of winchAccel, not an instant jump to the cap
+    expect(physics.velocity.y).toBeCloseTo(physics.winchAccel * dt, 2);
+    // Pull is straight along the line, so the sideways swing speed is gone
     expect(Math.abs(physics.velocity.x)).toBeLessThan(1);
 
-    // Near the anchor: arrival releases the line with an upward vault
-    physics.position.set(0, 39, 0);
-    physics.velocity.set(0, -5, 0);
+    // Speed keeps climbing frame over frame until it tops out at the cap
+    let prev = physics.velocity.y;
+    for (let i = 0; i < 6; i++) {
+      physics.position.y += physics.velocity.y * dt;
+      physics.update(dt, new THREE.Vector3(), new THREE.Vector3(0, 0, -1), false, false);
+      expect(physics.velocity.y).toBeGreaterThan(prev);
+      prev = physics.velocity.y;
+    }
+    expect(prev).toBeLessThanOrEqual(physics.winchSpeed + 1e-6);
+  });
+
+  it('winch arrival carries momentum past the anchor instead of clamping it', () => {
+    const anchor = new THREE.Vector3(0, 40, 0);
+    physics.position.set(0, 30, 0);
+    physics.attachWeb(anchor);
+    expect(physics.mode).toBe(MovementMode.SWINGING);
+    physics.winching = true;
+
+    // Arrive at full winch speed straight up the facade
+    physics.position.set(0, 38, 0);
+    physics.velocity.set(0, physics.winchSpeed, 0);
     physics.update(0.05, new THREE.Vector3(), new THREE.Vector3(0, 0, -1), false, false);
+
     expect(physics.mode).toBe(MovementMode.AIR);
     expect(physics.webAnchor).toBeNull();
     expect(physics.winching).toBe(false);
-    expect(physics.velocity.y).toBeGreaterThanOrEqual(2.9);
+    // Inertia is preserved: you leave with the speed you built, so you sail well
+    // above the anchor before gravity brings you back down.
+    expect(physics.velocity.y).toBeGreaterThan(physics.winchSpeed * 0.95);
+    const overshoot = (physics.velocity.y * physics.velocity.y) / (2 * physics.gravity);
+    expect(overshoot).toBeGreaterThan(10);
+  });
+
+  it('winch arrival cancels only the velocity driving into a wall', () => {
+    const anchor = new THREE.Vector3(0, 40, 0);
+    const wall = new WorldCollider();
+    // Facade slab occupying x >= 2, so its outward face normal is -X
+    wall.addBoxCoords(2, 0, -20, 30, 60, 20, 'wall');
+    wall.finalize();
+    physics.worldCollider = wall;
+
+    physics.position.set(0, 30, 0);
+    physics.attachWeb(anchor);
+    expect(physics.mode).toBe(MovementMode.SWINGING);
+    physics.winching = true;
+    // Slamming sideways into the facade with no vertical speed
+    physics.position.set(0, 38, 0);
+    physics.velocity.set(30, 0, 0);
+    physics.update(0.05, new THREE.Vector3(), new THREE.Vector3(1, 0, 0), false, false);
+
+    expect(physics.mode).toBe(MovementMode.AIR);
+    // Into-wall speed is gone (a small push back off the face is all that remains)
+    expect(physics.velocity.x).toBeLessThanOrEqual(0);
+    expect(Math.abs(physics.velocity.x)).toBeLessThan(4);
+    // ...and some of it became an upward vault rather than a dead stop
+    expect(physics.velocity.y).toBeGreaterThan(2);
+
+    physics.worldCollider = null;
   });
 
   it('slings toward the anchor on Space while swinging', () => {
