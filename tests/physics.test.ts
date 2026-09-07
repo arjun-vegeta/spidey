@@ -257,7 +257,7 @@ describe('SwingPhysics - Realistic Pendulum Web Mechanics', () => {
     expect(gained).toBeLessThan(8.0);
   });
 
-  it('sprints at 8 m/s via speed multiplier, crouch-shuffles at 2.2', () => {
+  it('sprints at 10.6 m/s via speed multiplier, crouch-shuffles at 3.6', () => {
     const inputDir = new THREE.Vector3(0, 0, -1);
 
     const sprinter = new SwingPhysics();
@@ -268,8 +268,8 @@ describe('SwingPhysics - Realistic Pendulum Web Mechanics', () => {
       sprinter.update(0.016, inputDir, new THREE.Vector3(), false, false);
     }
     const sprintSpeed = Math.hypot(sprinter.velocity.x, sprinter.velocity.z);
-    expect(sprintSpeed).toBeGreaterThan(7.0);
-    expect(sprintSpeed).toBeLessThanOrEqual(8.2);
+    expect(sprintSpeed).toBeGreaterThan(9.0);
+    expect(sprintSpeed).toBeLessThanOrEqual(11.0);
 
     const croucher = new SwingPhysics();
     croucher.mode = MovementMode.GROUNDED;
@@ -279,8 +279,8 @@ describe('SwingPhysics - Realistic Pendulum Web Mechanics', () => {
       croucher.update(0.016, inputDir, new THREE.Vector3(), false, false);
     }
     const crouchSpeed = Math.hypot(croucher.velocity.x, croucher.velocity.z);
-    expect(crouchSpeed).toBeGreaterThan(1.5);
-    expect(crouchSpeed).toBeLessThanOrEqual(2.4);
+    expect(crouchSpeed).toBeGreaterThan(2.5);
+    expect(crouchSpeed).toBeLessThanOrEqual(4.0);
   });
 
   it('winching reels straight to the anchor and pops the line on arrival', () => {

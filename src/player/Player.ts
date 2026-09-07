@@ -8,6 +8,24 @@ import { soundManager } from '../core/SoundManager';
 import { FireResult } from '../weapons/BaseWeapon';
 import { Sniper } from '../weapons/Sniper';
 import { WorldCollider, PushResult } from '../world/WorldCollider';
+import { Spring } from '../core/Spring';
+
+/**
+ * Landing-snap window: feet snap onto a floor top only when inside
+ * [top - fallSweep, top + tolerance]. Anything higher keeps falling —
+ * without the lower bound every falling frame teleports down to the
+ * highest floor below (winch vaults "flashing to the bottom").
+ * Pure so landing behavior is unit-testable without a DOM.
+ */
+export function shouldSnapToGround(
+  feetY: number,
+  top: number,
+  fallSweep: number,
+  isGrounded: boolean
+): boolean {
+  const tolerance = isGrounded ? 0.4 : 0.2;
+  return feetY <= top + tolerance && feetY >= top - fallSweep;
+}
 
 export class Player {
   public camera: THREE.PerspectiveCamera;
@@ -21,6 +39,19 @@ export class Player {
   public yaw: number = 0;
   public pitch: number = 0;
   public cameraRoll: number = 0;
+
+  // Camera recoil springs & screen shake (inspired by inspiration's punchy kinetic feel)
+  public recoilPitch: Spring = new Spring(190, 17);
+  public recoilYaw: Spring = new Spring(190, 17);
+  public fovKick: Spring = new Spring(220, 14);
+  public landDipSpring: Spring = new Spring(170, 15);
+  public shakeAmt: number = 0;
+
+  // Head bobbing & camera feel (inspiration/src/player.js lines 28, 211-214, 426-432)
+  public bobPhase: number = 0;
+  public bobAmt: number = 0;
+  public stepDist: number = 0;
+  public eyeH: number = 0.8;
 
   // Base FOV
   public baseFov: number = 75;
@@ -66,6 +97,7 @@ export class Player {
   // Shift reels rope while swinging; C reels rope while swinging.
   public isCrouching: boolean = false;
   public isSprinting: boolean = false;
+  public mantleCooldown: number = 0;
 
   // Tap-vs-hold Space while swinging: tap slings, hold winches.
   private winchWait: number = -1;
@@ -137,6 +169,11 @@ export class Player {
     this.lastDamageAt = -100;
     this.airTime = 0;
     this.landingDip = 0;
+    this.bobPhase = 0;
+    this.bobAmt = 0;
+    this.stepDist = 0;
+    this.eyeH = 0.8;
+    this.landDipSpring.set(0);
     this.footstepTimer = 0;
     soundManager.setHeartbeat(false);
     soundManager.updateRopeStrain(false, 0, 0);
@@ -157,12 +194,37 @@ export class Player {
     return this.physics.position;
   }
 
+  /**
+   * Adds trauma / screen shake impulse (damped exponentially every frame).
+   */
+  public addScreenShake(amount: number): void {
+    this.shakeAmt = Math.min(1.5, this.shakeAmt + amount);
+  }
+
+  /**
+   * Applies recoil kick to camera pitch/yaw springs, FOV pop spring, and screen shake.
+   */
+  public applyFireRecoil(
+    camKickPitch: number = 0.035,
+    camKickYaw: number = 0.008,
+    fovKickAmount: number = 2.0,
+    shakeAmount: number = 0.06
+  ): void {
+    // Upward pitch recoil kick + subtle yaw twitch
+    this.pitch = Math.max(-Math.PI / 2.05, Math.min(Math.PI / 2.05, this.pitch + camKickPitch * 0.45));
+    this.recoilPitch.kick(camKickPitch * 22);
+    this.recoilYaw.kick((Math.random() - 0.5) * camKickYaw * 30);
+    this.fovKick.kick(fovKickAmount * 28);
+    this.addScreenShake(shakeAmount);
+  }
+
   public takeDamage(amount: number, attackerPos?: THREE.Vector3): boolean {
     if (this.isDead || this.invulnerabilityTimer > 0) return false;
 
     this.health = Math.max(0, this.health - amount);
     this.invulnerabilityTimer = 0.4; // 400ms i-frames
     this.lastDamageAt = performance.now() * 0.001;
+    this.addScreenShake(0.22 + amount / 75.0);
 
     // Directional pan calculation based on attacker position relative to camera right
     let pan = 0;
@@ -207,6 +269,9 @@ export class Player {
     if (this.invulnerabilityTimer > 0) {
       this.invulnerabilityTimer -= dt;
     }
+    if (this.mantleCooldown > 0) {
+      this.mantleCooldown -= dt;
+    }
 
     // HP regen to hpRegenTo after hpRegenDelay without damage
     if (this.health < this.hpRegenTo) {
@@ -227,11 +292,15 @@ export class Player {
     // Clamp vertical pitch to prevent backflips
     this.pitch = Math.max(-Math.PI / 2.05, Math.min(Math.PI / 2.05, this.pitch));
 
-    // Dynamic camera roll when swinging or strafing
-    const targetRoll = this.isSwinging
-      ? THREE.MathUtils.clamp(-this.physics.velocity.x * 0.012, -0.3, 0.3)
-      : (this.input.isMovingLeft() ? 0.025 : (this.input.isMovingRight() ? -0.025 : 0));
-    this.cameraRoll = THREE.MathUtils.lerp(this.cameraRoll, targetRoll, dt * 8.0);
+    // Dynamic camera roll when swinging or strafing (inspiration: damp(this.roll, -mv.x * 0.022, 9, dt))
+    let targetRoll: number;
+    if (this.isSwinging) {
+      targetRoll = THREE.MathUtils.clamp(-this.physics.velocity.x * 0.012, -0.3, 0.3);
+    } else {
+      const strafeX = (this.input.isMovingRight() ? 1 : 0) - (this.input.isMovingLeft() ? 1 : 0);
+      targetRoll = -strafeX * 0.022;
+    }
+    this.cameraRoll = THREE.MathUtils.damp(this.cameraRoll, targetRoll, 9.0, dt);
 
     // Apply camera rotation: Yaw -> Pitch -> Roll (scope sway rides the euler only)
     let swayY = 0;
@@ -250,7 +319,47 @@ export class Player {
     } else {
       this.breathLeft = Math.min(3, this.breathLeft + dt * 2);
     }
-    this._euler.set(this.pitch + swayP, this.yaw + swayY, this.cameraRoll);
+
+    // Update camera recoil, FOV & land dip springs (damped harmonic oscillator from inspiration)
+    this.recoilPitch.update(dt);
+    this.recoilYaw.update(dt);
+    this.fovKick.update(dt);
+    this.landDipSpring.update(dt);
+
+    // Dynamic head bob & step distance pacing (inspiration/src/player.js lines 211-214)
+    const horizSpeed = Math.hypot(this.physics.velocity.x, this.physics.velocity.z);
+    const isMovingGround = this.physics.isGrounded && horizSpeed > 0.6;
+    const targetBobAmt = isMovingGround ? THREE.MathUtils.clamp(horizSpeed / 7.0, 0.3, 1.4) : 0;
+    this.bobAmt = THREE.MathUtils.damp(this.bobAmt, targetBobAmt, 8.0, dt);
+
+    if (isMovingGround) {
+      this.bobPhase += dt * (7.0 + horizSpeed * 0.5);
+      this.stepDist += horizSpeed * dt;
+      const stepInterval = this.isSprinting ? 2.5 : 2.0;
+      if (this.stepDist >= stepInterval) {
+        this.stepDist = 0;
+        soundManager.playFootstep();
+      }
+    } else {
+      this.stepDist = 0;
+    }
+
+    // Exponential screen shake decay
+    const sh = this.shakeAmt;
+    this.shakeAmt = THREE.MathUtils.damp(sh, 0, 7.0, dt);
+    const shk = Math.min(this.shakeAmt, 1.2);
+
+    const shakeRotX = (Math.random() - 0.5) * shk * 0.035;
+    const shakeRotY = (Math.random() - 0.5) * shk * 0.035;
+    const shakeRotZ = (Math.random() - 0.5) * shk * 0.02;
+
+    const bobRoll = Math.sin(this.bobPhase * 0.5) * 0.004 * this.bobAmt;
+
+    this._euler.set(
+      this.pitch + swayP + this.recoilPitch.value + shakeRotX,
+      this.yaw + swayY + this.recoilYaw.value + shakeRotY,
+      this.cameraRoll + bobRoll + shakeRotZ
+    );
     this.camera.quaternion.setFromEuler(this._euler);
 
     // 2. Movement direction vectors in camera horizontal plane
@@ -270,23 +379,6 @@ export class Player {
     if (this.input.isMovingLeft()) inputDir.sub(rightFlat);
     if (inputDir.lengthSq() > 0.01) inputDir.normalize();
     const isMoving = inputDir.lengthSq() > 0.01;
-
-    // Footsteps on ground when moving (plan 17)
-    if (this.physics.isGrounded && !this.isDead) {
-      const horizSpeed = Math.hypot(this.physics.velocity.x, this.physics.velocity.z);
-      if (isMoving && horizSpeed > 1.2) {
-        this.footstepTimer -= dt;
-        if (this.footstepTimer <= 0) {
-          soundManager.playFootstep();
-          const stepInterval = Math.max(0.24, 0.50 - (horizSpeed / 5.0) * 0.24);
-          this.footstepTimer = stepInterval;
-        }
-      } else {
-        this.footstepTimer = 0.12;
-      }
-    } else {
-      this.footstepTimer = 0.15;
-    }
 
     // 3. Web-Slinging Actions
     // Scan for potential anchors ahead (forgiving cone + height bias + latch magnet)
@@ -402,10 +494,16 @@ export class Player {
       this.pitch = Math.max(-Math.PI / 2.05, this.pitch - 0.5 * dt);
     }
 
-    this.physics.update(dt, inputDir, forward, isReelingIn, isReelingOut, braking, diving);
+    // Continuous collision sub-stepping: fast-moving player (swings/falls) never tunnels through thin railings or walls
+    const moveSpeed = this.physics.velocity.length();
+    const maxSubStepDist = 0.20; // 20cm max distance per collision step
+    const subSteps = Math.min(4, Math.max(1, Math.ceil((moveSpeed * dt) / maxSubStepDist)));
+    const subDt = dt / subSteps;
 
-    // World collision: ground raycast (floors/roofs) + capsule push-out (walls)
-    this.resolveWorldCollisions(collidables);
+    for (let s = 0; s < subSteps; s++) {
+      this.physics.update(subDt, inputDir, forward, isReelingIn, isReelingOut, braking, diving);
+      this.resolveWorldCollisions(collidables, subDt);
+    }
 
     // The line can end inside physics (winch arrival, slack timeout):
     // sync the renderer/sound state when swinging stopped but nobody told the shooter.
@@ -414,23 +512,42 @@ export class Player {
     }
     this.physics.winching = this.physics.winching && this.isSwinging;
 
-    // Landing dip feel & soft/hard landing thuds
+    // Landing dip feel & soft/hard landing thuds (inspiration lines 198-201)
     if (!wasGrounded && this.physics.isGrounded) {
+      const hSpeed = Math.hypot(this.physics.velocity.x, this.physics.velocity.z);
+      if (hSpeed > 9.0) {
+        this.physics.landGraceTimer = 0.4;
+      }
+      const impact = THREE.MathUtils.clamp(-fallSpeedBefore / 14.0, 0, 1.5);
+      this.landDipSpring.kick(-impact * 4.0 - 0.4);
       if (fallSpeedBefore < -25) {
-        this.landingDip = Math.min(0.35, (-fallSpeedBefore - 12) * 0.02);
         this.physics.controlDampTimer = 0.25;
+        this.addScreenShake(0.18);
         soundManager.playLandHard();
       } else if (fallSpeedBefore < -8) {
-        this.landingDip = Math.min(0.25, (-fallSpeedBefore - 8) * 0.015);
+        this.addScreenShake(0.08);
         soundManager.playLandSoft();
       }
     }
-    this.landingDip = THREE.MathUtils.lerp(this.landingDip, 0, dt * 7.0);
 
-    // Snap camera position to physics position (eye level drops when crouched)
-    this._eyeOffset.set(0, this.isCrouching ? 0.35 : 0.8, 0);
-    this.camera.position.copy(this.physics.position).add(this._eyeOffset);
-    this.camera.position.y -= this.landingDip;
+    // Smooth eye level transition between standing (0.8) and crouching (0.35)
+    const targetEye = this.isCrouching ? 0.35 : 0.8;
+    this.eyeH = THREE.MathUtils.damp(this.eyeH, targetEye, 14.0, dt);
+
+    // Apply vertical step bounce, lateral head sway, land dip spring to eye position
+    const bobY = Math.abs(Math.sin(this.bobPhase)) * 0.03 * this.bobAmt;
+    const bobX = Math.cos(this.bobPhase * 0.5) * 0.018 * this.bobAmt;
+
+    this.camera.position.copy(this.physics.position);
+    this.camera.position.y += this.eyeH + this.landDipSpring.value * 0.07 + bobY;
+    this.camera.position.addScaledVector(rightFlat, bobX);
+
+    // Apply positional screen shake along lateral and vertical camera axes
+    if (this.shakeAmt > 0.001) {
+      const shk = Math.min(this.shakeAmt, 1.2);
+      this.camera.position.addScaledVector(this._rightFlat, (Math.random() - 0.5) * shk * 0.07);
+      this.camera.position.y += (Math.random() - 0.5) * shk * 0.07;
+    }
 
     // Air time tracking
     if (!this.physics.isGrounded) this.airTime += dt;
@@ -459,8 +576,9 @@ export class Player {
       const targetFov = this.baseFov + speedT * 22.0; // Kicks in past a sprint, widens to 97 at full swing
       this.currentFov = THREE.MathUtils.lerp(this.currentFov, targetFov, dt * 6.0);
     }
-    if (Math.abs(this.camera.fov - this.currentFov) > 0.01) {
-      this.camera.fov = this.currentFov;
+    const effectiveFov = this.currentFov + this.fovKick.value;
+    if (Math.abs(this.camera.fov - effectiveFov) > 0.01) {
+      this.camera.fov = effectiveFov;
       this.camera.updateProjectionMatrix();
     }
 
@@ -478,13 +596,14 @@ export class Player {
     if (this.input.reloadJustPressed) {
       this.weaponManager.reload();
     }
-    if (activeWep.currentAmmo === 0 && !activeWep.isReloading) {
+    if (activeWep.type !== 'sword' && activeWep.currentAmmo === 0 && !activeWep.isReloading) {
       this.weaponManager.reload();
     }
 
     // 9. Weapon Firing (bullets test enemies AND walls so cover blocks shots)
     let fireResult: FireResult | null = null;
-    const shouldFire = activeWep.type === 'smg' ? this.input.isFiring() : this.input.fireJustPressed;
+    const shouldFire = this.input.fireJustPressed ||
+      ((activeWep.type === 'smg' || activeWep.type === 'sword') && this.input.isFiring());
 
     if (shouldFire) {
       const now = performance.now() * 0.001;
@@ -496,6 +615,15 @@ export class Player {
         moving: isMoving,
         aiming: this.input.isZoomHolding() && !this.isSwinging,
       });
+
+      if (fireResult) {
+        this.applyFireRecoil(
+          activeWep.camKick[0] * (isAiming ? 0.7 : 1.0),
+          activeWep.camKick[1],
+          activeWep.fovKick,
+          activeWep.shakeAmount
+        );
+      }
     }
 
     // 10. Update Weapon & Arm Animations
@@ -521,12 +649,12 @@ export class Player {
 
   private static UP: THREE.Vector3 = new THREE.Vector3(0, 1, 0);
 
-  private resolveWorldCollisions(collidables: THREE.Object3D[]): void {
+  private resolveWorldCollisions(collidables: THREE.Object3D[], dt: number): void {
     const p = this.physics.position;
     const r = this.physics.playerRadius;
 
     if (this.worldCollider) {
-      this.resolveWithShells(p, r);
+      this.resolveWithShells(p, r, dt);
     } else {
       this.resolveWithMeshes(p, r, collidables);
     }
@@ -542,14 +670,17 @@ export class Player {
   }
 
   /** Preferred path: simplified collision shells + spatial hash. */
-  private resolveWithShells(p: THREE.Vector3, r: number): void {
+  private resolveWithShells(p: THREE.Vector3, r: number, dt: number): void {
     const coll = this.worldCollider as WorldCollider;
     const halfH = this.physics.playerHeight * 0.5;
 
-    // A. Ground snap via floor shells (supports roofs, terraces, slabs, street)
+    // A. Ground snap via floor shells (supports roofs, terraces, slabs, street, slopes)
     const feetY = p.y - halfH;
-    const top = coll.groundAt(p.x, feetY, p.z);
-    if (top !== null && feetY <= top + 0.15 && this.physics.velocity.y <= 0.5) {
+    const isFalling = this.physics.velocity.y <= 0.5;
+    // When falling, dynamic sweep allowance prevents tunneling through fast falls
+    const fallSweep = isFalling ? Math.max(0.55, Math.min(2.5, -this.physics.velocity.y * dt + 0.4)) : 0.55;
+    const top = coll.groundAt(p.x, feetY, p.z, fallSweep);
+    if (top !== null && isFalling && shouldSnapToGround(feetY, top, fallSweep, this.physics.isGrounded)) {
       p.y = top + halfH;
       if (this.physics.velocity.y < 0) this.physics.velocity.y = 0;
       if (!this.physics.isGrounded) {
@@ -560,7 +691,7 @@ export class Player {
           this.webShooter.isWebActive = false;
         }
       }
-    } else if (top === null || feetY > top + 0.35) {
+    } else if (top === null || feetY > top + 0.45) {
       if (this.physics.isGrounded) {
         this.physics.isGrounded = false;
         if (this.physics.mode === MovementMode.GROUNDED) this.physics.mode = MovementMode.AIR;
@@ -581,7 +712,7 @@ export class Player {
 
     // B. Horizontal push-out against wall shells
     const push = this.pushScratch;
-    coll.pushOut(p.x, p.z, r, p.y - halfH, p.y + halfH, push);
+    coll.pushOut(p.x, p.z, r, p.y - halfH, p.y + halfH, push, this.physics.velocity.x, this.physics.velocity.z);
     let wallNx = 0;
     let wallNz = 0;
     let hasWallContact = false;
@@ -598,17 +729,47 @@ export class Player {
       hasWallContact = true;
     }
 
-    // B1. Head-bump: when moving upward and a wall box overlaps the head band but not lower torso
+    // B1. Ledge / railing mantle assist:
+    // When airborne, moving forward, not in grapple/zip, and approaching a standable railing or ledge top
+    if (
+      !this.physics.isGrounded &&
+      this.mantleCooldown <= 0 &&
+      this.input.isMovingForward() &&
+      this.physics.mode === MovementMode.AIR &&
+      this.physics.velocity.y < 7.0
+    ) {
+      const fwd = this._forwardFlat;
+      const probeDist = 0.55;
+      const aheadX = p.x + fwd.x * probeDist;
+      const aheadZ = p.z + fwd.z * probeDist;
+      const probeTop = coll.groundAt(aheadX, feetY + 1.25, aheadZ, 1.4);
+      if (probeTop !== null) {
+        const dy = probeTop - feetY;
+        if (dy >= 0.35 && dy <= 1.35) {
+          const ceil = coll.ceilingAt(aheadX, probeTop + this.physics.playerHeight, aheadZ);
+          if (ceil === null || ceil >= probeTop + this.physics.playerHeight) {
+            // Smooth vault pop onto ledge / railing
+            this.physics.velocity.y = Math.min(8.5, Math.sqrt(2 * 28.0 * (dy + 0.25)));
+            this.physics.velocity.x = fwd.x * 3.2;
+            this.physics.velocity.z = fwd.z * 3.2;
+            this.mantleCooldown = 0.5;
+            soundManager.playLandSoft();
+          }
+        }
+      }
+    }
+
+    // B2. Head-bump: when moving upward and a wall box overlaps the head band but not lower torso
     if (this.physics.velocity.y > 0) {
       const headMinY = p.y + halfH - 0.4;
       const headMaxY = p.y + halfH + 0.3;
       const headPush = this.headPushScratch;
-      coll.pushOut(p.x, p.z, r * 0.8, headMinY, headMaxY, headPush);
+      coll.pushOut(p.x, p.z, r * 0.8, headMinY, headMaxY, headPush, this.physics.velocity.x, this.physics.velocity.z);
 
       if (headPush.pushed) {
         // If the wall does NOT overlap lower torso/feet, player's head hit an overhang/ceiling
         const torsoPush = this.torsoPushScratch;
-        coll.pushOut(p.x, p.z, r * 0.8, p.y - halfH, p.y + halfH - 0.5, torsoPush);
+        coll.pushOut(p.x, p.z, r * 0.8, p.y - halfH, p.y + halfH - 0.5, torsoPush, this.physics.velocity.x, this.physics.velocity.z);
         if (!torsoPush.pushed) {
           this.physics.velocity.y = 0;
           soundManager.playImpactWall();
@@ -616,7 +777,7 @@ export class Player {
       }
     }
 
-    // B2. Wall-run entry: airborne + fast + holding forward + side contact
+    // B3. Wall-run entry: airborne + fast + holding forward + side contact
     if (
       hasWallContact &&
       !this.physics.isGrounded &&

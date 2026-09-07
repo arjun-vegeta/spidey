@@ -106,7 +106,7 @@ export class Minimap {
         ctx.arc(ex, ey, e.kind === 'sniper' ? 4 : 3, 0, Math.PI * 2);
         ctx.fill();
         if (e.kind === 'sniper') {
-          ctx.strokeStyle = '#faf7ee';
+          ctx.strokeStyle = '#f5eedd';
           ctx.lineWidth = 1.5;
           ctx.beginPath();
           ctx.arc(ex, ey, 5.5, 0, Math.PI * 2);

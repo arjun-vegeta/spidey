@@ -168,13 +168,14 @@ export class HUD {
       <!-- Bottom Right: Weapons Drawer & Swing Status -->
       <div class="hud-bottom-right">
         <div id="weapon-list" class="weapon-list-box">
-          <div class="wep-row wep-active" data-idx="0">[1] PISTOL <span class="wep-ammo">12/60</span></div>
-          <div class="wep-row" data-idx="1">[2] SMG <span class="wep-ammo">32/160</span></div>
-          <div class="wep-row" data-idx="2">[3] SNIPER <span class="wep-ammo">5/25</span></div>
+          <div class="wep-row wep-active" data-idx="0">[1] SWORD <span class="wep-ammo">∞</span></div>
+          <div class="wep-row" data-idx="1">[2] PISTOL <span class="wep-ammo">12/60</span></div>
+          <div class="wep-row" data-idx="2">[3] RIFLE <span class="wep-ammo">32/160</span></div>
+          <div class="wep-row" data-idx="3">[4] SNIPER <span class="wep-ammo">5/25</span></div>
         </div>
-        <div id="active-wep-name" class="active-wep-title">PISTOL</div>
-        <div id="active-wep-desc" class="active-wep-desc">tactical ballpoint sidearm · swing & shoot enabled</div>
-        <div id="swing-status" class="swing-status-badge">SWING READY</div>
+        <div id="active-wep-name" class="active-wep-title">SWORD</div>
+        <div id="active-wep-desc" class="active-wep-desc">forged ink katana · quick slash combo · block to guard · aerial slice enabled</div>
+        <div id="swing-status" class="swing-status-badge">GROUND / AERIAL READY</div>
       </div>
 
       <!-- Wave Announcement / Big Text Banner -->
@@ -452,7 +453,7 @@ export class HUD {
     if (!this.deathEl) {
       this.deathEl = document.createElement('div');
       this.deathEl.id = 'death-screen';
-      this.deathEl.innerHTML = `<div class="death-title">SKETCHED OUT</div><div class="death-killer"></div><div class="death-score">SCORE 0</div><div class="death-hint">Click or press R to redraw · restart</div>`;
+      this.deathEl.innerHTML = `<div class="death-title">SKETCHED OUT</div><div class="death-killer"></div><div class="death-score">SCORE 0</div><div class="death-hint">Click or press ENTER / R to redraw · restart</div>`;
       document.body.appendChild(this.deathEl);
     }
     const s = this.deathEl.querySelector('.death-score') as HTMLElement;
@@ -552,7 +553,16 @@ export class HUD {
     const activeWep = wepMgr.activeWeapon;
     const isSwinging = player.isSwinging;
 
-    if (activeWep.isReloading) {
+    if (activeWep.type === 'sword') {
+      this.reloadBarBox.style.display = 'none';
+      if (this.lastAmmoText !== 'SWORD_AMMO') {
+        this.ammoElement.innerHTML = `∞<span class="ammo-sub"> MELEE</span>`;
+        this.lastAmmoText = 'SWORD_AMMO';
+      }
+      this.ammoBarFill.style.width = '100%';
+      this.ammoElement.classList.remove('ammo-low');
+      this.ammoBarFill.classList.remove('ammo-low-fill');
+    } else if (activeWep.isReloading) {
       this.ammoElement.textContent = `RELOADING...`;
       this.reloadBarBox.style.display = 'block';
       const reloadPct = Math.min(100, Math.max(0, (activeWep.reloadProgress / Math.max(0.01, activeWep.reloadTime)) * 100));
@@ -578,10 +588,10 @@ export class HUD {
     // Swing Status Badge
     if (isSwinging) {
       if (activeWep.usableWhileSwinging) {
-        this.swingStatusElement.textContent = 'SWING-READY · CAN FIRE';
+        this.swingStatusElement.textContent = 'SWING-READY · CAN SLICE / FIRE';
         this.swingStatusElement.className = 'swing-status-badge swing-ready';
       } else {
-        this.swingStatusElement.textContent = 'LOCKED WHILE SWINGING (USE PISTOL [1])';
+        this.swingStatusElement.textContent = 'LOCKED WHILE SWINGING (USE SWORD [1] OR PISTOL [2])';
         this.swingStatusElement.className = 'swing-status-badge swing-locked';
       }
     } else {
@@ -595,7 +605,9 @@ export class HUD {
       const wep = wepMgr.weapons[idx];
       if (wep) {
         const ammoSpan = row.querySelector('.wep-ammo');
-        if (ammoSpan) ammoSpan.textContent = `${wep.currentAmmo}/${wep.reserveAmmo}`;
+        if (ammoSpan) {
+          ammoSpan.textContent = wep.type === 'sword' ? '∞' : `${wep.currentAmmo}/${wep.reserveAmmo}`;
+        }
       }
       if (idx === wepMgr.activeIndex) {
         row.classList.add('wep-active');

@@ -19,7 +19,7 @@ import { InkShaderMaterial } from '../shaders/InkShaderMaterial';
  * ====================================================================
  */
 export class SMG extends BaseWeapon {
-  public readonly name = 'SMG';
+  public readonly name = 'RIFLE';
   public readonly type = 'smg' as const;
   public readonly usableWhileSwinging = false; // Locked while swinging!
   public readonly magazineSize = 32;
@@ -34,7 +34,16 @@ export class SMG extends BaseWeapon {
   public readonly spread = 0.028;
   public readonly recoilAmount = 0.045;
   public readonly reloadTime = 1.4;
-  public readonly flavorText = 'tactical ink carbine · holographic reflex optic · press Q to ADS';
+  public readonly flavorText = 'tactical ink rifle · optical red dot reflex sight · press Q to ADS';
+
+  // Tactile shooting feel: rapid buzzing recoil vibration, high-frequency stream
+  public override camKick: [number, number] = [0.015, 0.006];
+  public override fovKick: number = 1.2;
+  public override shakeAmount: number = 0.038;
+  public override tracerThickness: number = 0.032;
+  public override tracerColor: THREE.Color = new THREE.Color(0x0984e3);
+  public override flashScale: number = 0.95;
+  public override flashColorHex: number = 0xff793f;
 
   public isAiming: boolean = false;
 
@@ -62,13 +71,8 @@ export class SMG extends BaseWeapon {
     this.registerFlashMaterial(darkMat, new THREE.Color(0x0a1435), new THREE.Color(0x5070c0));
 
     const redReticleMat = new THREE.MeshBasicMaterial({
-      color: 0xd63031,
+      color: 0xff3333,
       toneMapped: false
-    });
-
-    const blueRingMat = new THREE.MeshBasicMaterial({
-      color: 0x1a2b72,
-      wireframe: true
     });
 
     // 1. Upper Receiver Body
@@ -139,48 +143,99 @@ export class SMG extends BaseWeapon {
     stockMesh.add(InkShaderMaterial.createEdgeLines(stockGeom));
     this.modelGroup.add(stockMesh);
 
-    // 7. Holographic Sight (matching reference screenshots!)
-    // Base mount
-    const holoBaseGeom = new THREE.BoxGeometry(0.048, 0.025, 0.09);
+    // 7. Tactical Optical Reflex Sight (inspired by inspiration)
+    // Low-profile riser mount
+    const holoBaseGeom = new THREE.BoxGeometry(0.042, 0.016, 0.075);
     const holoBase = new THREE.Mesh(holoBaseGeom, darkMat);
-    holoBase.position.set(0, 0.095, -0.08);
+    holoBase.position.set(0, 0.094, -0.06);
     holoBase.add(InkShaderMaterial.createEdgeLines(holoBaseGeom));
     this.modelGroup.add(holoBase);
 
-    // Protective square optic hood
-    const hoodGeom = new THREE.BoxGeometry(0.052, 0.052, 0.075);
-    const hoodMesh = new THREE.Mesh(hoodGeom, gunMat);
-    hoodMesh.position.set(0, 0.13, -0.08);
-    hoodMesh.add(InkShaderMaterial.createEdgeLines(hoodGeom));
-    this.modelGroup.add(hoodMesh);
+    // Hollow optic hood (open viewing window without solid blocks obstructing view)
+    const opticFrameGroup = new THREE.Group();
+    opticFrameGroup.position.set(0, 0.126, -0.06);
 
-    // Clear aperture cutout (translucent framed glass)
-    const glassGeom = new THREE.PlaneGeometry(0.038, 0.038);
+    const hoodW = 0.068;
+    const hoodH = 0.058;
+    const hoodD = 0.028;
+    const hoodT = 0.005;
+
+    // Top hood bar
+    const topBarGeom = new THREE.BoxGeometry(hoodW, hoodT, hoodD);
+    const topBar = new THREE.Mesh(topBarGeom, darkMat);
+    topBar.position.set(0, hoodH * 0.5 - hoodT * 0.5, 0);
+    topBar.add(InkShaderMaterial.createEdgeLines(topBarGeom));
+    opticFrameGroup.add(topBar);
+
+    // Bottom base bar
+    const bottomBarGeom = new THREE.BoxGeometry(hoodW, hoodT, hoodD);
+    const bottomBar = new THREE.Mesh(bottomBarGeom, darkMat);
+    bottomBar.position.set(0, -hoodH * 0.5 + hoodT * 0.5, 0);
+    bottomBar.add(InkShaderMaterial.createEdgeLines(bottomBarGeom));
+    opticFrameGroup.add(bottomBar);
+
+    // Left wall
+    const leftWallGeom = new THREE.BoxGeometry(hoodT, hoodH, hoodD);
+    const leftWall = new THREE.Mesh(leftWallGeom, darkMat);
+    leftWall.position.set(-hoodW * 0.5 + hoodT * 0.5, 0, 0);
+    leftWall.add(InkShaderMaterial.createEdgeLines(leftWallGeom));
+    opticFrameGroup.add(leftWall);
+
+    // Right wall
+    const rightWallGeom = new THREE.BoxGeometry(hoodT, hoodH, hoodD);
+    const rightWall = new THREE.Mesh(rightWallGeom, darkMat);
+    rightWall.position.set(hoodW * 0.5 - hoodT * 0.5, 0, 0);
+    rightWall.add(InkShaderMaterial.createEdgeLines(rightWallGeom));
+    opticFrameGroup.add(rightWall);
+
+    // Anti-glare optical glass lens (crystal clear aperture)
+    const glassGeom = new THREE.PlaneGeometry(hoodW - hoodT * 2, hoodH - hoodT * 2);
     const glassMat = new THREE.MeshBasicMaterial({
-      color: 0x8ea8db,
+      color: 0x74b9ff,
       transparent: true,
-      opacity: 0.15,
-      side: THREE.DoubleSide
+      opacity: 0.10,
+      side: THREE.DoubleSide,
+      depthWrite: false
     });
     const glassMesh = new THREE.Mesh(glassGeom, glassMat);
-    glassMesh.position.set(0, 0.13, -0.08);
-    this.modelGroup.add(glassMesh);
+    glassMesh.position.set(0, 0, 0);
+    opticFrameGroup.add(glassMesh);
 
-    // Sketched holographic circle reticle
-    const ringGeom = new THREE.RingGeometry(0.009, 0.012, 16);
-    const ringMesh = new THREE.Mesh(ringGeom, blueRingMat);
-    ringMesh.position.set(0, 0.13, -0.079);
-    this.modelGroup.add(ringMesh);
+    // Luminous reflex outer ring
+    const reticleRing = new THREE.Mesh(
+      new THREE.TorusGeometry(0.008, 0.0013, 6, 24),
+      redReticleMat
+    );
+    reticleRing.position.set(0, 0, 0.001);
+    opticFrameGroup.add(reticleRing);
 
-    // Center Red Dot
-    const dotGeom = new THREE.SphereGeometry(0.0035, 6, 6);
-    const dotMesh = new THREE.Mesh(dotGeom, redReticleMat);
-    dotMesh.position.set(0, 0.13, -0.078);
-    this.modelGroup.add(dotMesh);
+    // Floating center red dot
+    const reticleDot = new THREE.Mesh(
+      new THREE.SphereGeometry(0.002, 8, 8),
+      redReticleMat
+    );
+    reticleDot.position.set(0, 0, 0.002);
+    opticFrameGroup.add(reticleDot);
+
+    // Tactical micro-crosshair ticks
+    const tickHGeom = new THREE.BoxGeometry(0.0035, 0.0009, 0.001);
+    const tickVGeom = new THREE.BoxGeometry(0.0009, 0.0035, 0.001);
+    const tickL = new THREE.Mesh(tickHGeom, redReticleMat);
+    tickL.position.set(-0.0125, 0, 0.001);
+    const tickR = new THREE.Mesh(tickHGeom, redReticleMat);
+    tickR.position.set(0.0125, 0, 0.001);
+    const tickT = new THREE.Mesh(tickVGeom, redReticleMat);
+    tickT.position.set(0, 0.0125, 0.001);
+    const tickB = new THREE.Mesh(tickVGeom, redReticleMat);
+    tickB.position.set(0, -0.0125, 0.001);
+    opticFrameGroup.add(tickL, tickR, tickT, tickB);
+
+    this.modelGroup.add(opticFrameGroup);
 
     // Muzzle socket at flash-hider tip
     this.muzzleTip.position.set(0, 0.035, -0.51);
     this.modelGroup.add(this.muzzleTip);
+    this.initMuzzleFlash();
 
     this.modelGroup.scale.set(1.1, 1.1, 1.1);
   }

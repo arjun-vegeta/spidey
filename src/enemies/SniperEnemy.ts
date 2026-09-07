@@ -48,6 +48,8 @@ export class SniperEnemy extends Enemy {
   private repositionTarget: THREE.Vector3 | null = null;
   private repositionTelegraphTimer: number = 0;
   private hasChargeSound: boolean = false;
+  private blockedLosTimer: number = 0;
+  private tmpCandidatePerch: THREE.Vector3 = new THREE.Vector3();
 
   public static resetStaticState(): void {
     SniperEnemy.activeChargers = 0;
@@ -78,9 +80,20 @@ export class SniperEnemy extends Enemy {
 
     // Cape / hooded cloak shoulder mantle
     const mantleGeom = new THREE.BoxGeometry(0.56, 0.25, 0.36);
-    const mantleMesh = this.createMesh(mantleGeom, this.primaryEnemyMat, false, true);
+    const mantleMesh = this.createMesh(mantleGeom, this.accentRedMat, false, true);
     mantleMesh.position.set(0, 0.22, 0);
     torsoGroup.add(mantleMesh);
+
+    // Long coat skirt: tall still silhouette vs the bulky thug, flares over the perch.
+    const coatGeom = new THREE.BoxGeometry(0.5, 0.5, 0.34);
+    const coat = this.createMesh(coatGeom, this.primaryEnemyMat, false, false);
+    coat.position.set(0, -0.42, -0.02);
+    torsoGroup.add(coat);
+    // Hood peak: triangular read from the side so the head never confuses with a thug (red ink).
+    const peakGeom = new THREE.BoxGeometry(0.16, 0.1, 0.22);
+    const peak = this.createMesh(peakGeom, this.accentRedMat, false, false);
+    peak.position.set(0, 0.62, 0.1);
+    torsoGroup.add(peak);
 
     // 2. Distinct Head / Hooded Sniper Mask Weakpoint (Red Ink Accent!)
     const headGeom = new THREE.BoxGeometry(0.3, 0.32, 0.3);
@@ -99,15 +112,22 @@ export class SniperEnemy extends Enemy {
     const legWidth = 0.16;
     const legHeight = 0.75;
     const legGeom = new THREE.BoxGeometry(legWidth, legHeight, 0.22);
+    const kneeGeom = new THREE.BoxGeometry(0.18, 0.16, 0.14);
 
     const leftLeg = this.createMesh(legGeom, this.primaryEnemyMat, false, true);
     leftLeg.position.set(-0.16, 0.38, 0.05);
     leftLeg.rotation.x = -0.15;
+    const leftKnee = this.createMesh(kneeGeom, this.accentRedMat, false, false);
+    leftKnee.position.set(0, -0.05, 0.12);
+    leftLeg.add(leftKnee);
     root.add(leftLeg);
 
     const rightLeg = this.createMesh(legGeom, this.primaryEnemyMat, false, true);
     rightLeg.position.set(0.16, 0.38, -0.05);
     rightLeg.rotation.x = 0.15;
+    const rightKnee = this.createMesh(kneeGeom, this.accentRedMat, false, false);
+    rightKnee.position.set(0, -0.05, 0.12);
+    rightLeg.add(rightKnee);
     root.add(rightLeg);
 
     // 4. Heavy Anti-Materiel Sketch Sniper Rifle
@@ -120,10 +140,10 @@ export class SniperEnemy extends Enemy {
     receiver.position.set(0, 0, 0.15);
     this.rifleGroup.add(receiver);
 
-    // Long Sniper Barrel
+    // Long Sniper Barrel (crimson red ink)
     const barrelGeom = new THREE.CylinderGeometry(0.025, 0.025, 1.2, 6);
     barrelGeom.rotateX(Math.PI * 0.5);
-    const barrel = this.createMesh(barrelGeom, this.primaryEnemyMat, false, false);
+    const barrel = this.createMesh(barrelGeom, this.accentRedMat, false, false);
     barrel.position.set(0, 0.02, 0.95);
     this.rifleGroup.add(barrel);
 
@@ -133,10 +153,10 @@ export class SniperEnemy extends Enemy {
     brake.position.set(0, 0.02, 1.58);
     this.rifleGroup.add(brake);
 
-    // High-magnification Scope
+    // High-magnification Scope (red ink)
     const scopeTubeGeom = new THREE.CylinderGeometry(0.04, 0.04, 0.45, 8);
     scopeTubeGeom.rotateX(Math.PI * 0.5);
-    const scopeTube = this.createMesh(scopeTubeGeom, this.primaryEnemyMat, false, false);
+    const scopeTube = this.createMesh(scopeTubeGeom, this.accentRedMat, false, false);
     scopeTube.position.set(0, 0.12, 0.2);
     this.rifleGroup.add(scopeTube);
 
@@ -186,7 +206,8 @@ export class SniperEnemy extends Enemy {
   }
 
   protected updateAI(dt: number, playerPos: THREE.Vector3, collidables: THREE.Mesh[]): void {
-    this.group.getWorldPosition(this.tmpMyPos);
+    this.tmpMyPos.copy(this.group.position);
+    this.group.updateMatrixWorld(true);
 
     const distToPlayer = this.tmpMyPos.distanceTo(playerPos);
 
@@ -194,8 +215,8 @@ export class SniperEnemy extends Enemy {
     this.rifleGroup.position.z = THREE.MathUtils.lerp(this.rifleGroup.position.z, 0.15, dt * 10.0);
     this.rifleGroup.rotation.x = THREE.MathUtils.lerp(this.rifleGroup.rotation.x, 0, dt * 10.0);
 
-    // Check if player is within sniper range
-    if (distToPlayer > this.maxSniperRange || distToPlayer < this.minSniperRange) {
+    // Check if player is within sniper range (unless completing a reposition dash)
+    if ((distToPlayer > this.maxSniperRange || distToPlayer < this.minSniperRange) && !this.repositionTarget) {
       this.cancelAim();
       return;
     }
@@ -203,25 +224,43 @@ export class SniperEnemy extends Enemy {
     // Line of sight check (throttled to every 0.15s, non-recursive for perf)
     this.muzzleSocket.getWorldPosition(this.tmpMuzzle);
 
-    this.tmpTarget.copy(playerPos);
-    this.tmpTarget.y += 0.9; // Center chest
+    this.tmpTarget.copy(playerPos); // Center chest (playerPos is capsule center)
     this.tmpDir.copy(this.tmpTarget).sub(this.tmpMuzzle);
     const targetDist = this.tmpDir.length();
-    this.tmpDir.normalize();
 
     this.losTimer -= dt;
     if (this.losTimer <= 0) {
       this.losTimer = 0.15;
-      this.losRaycaster.set(this.tmpMuzzle, this.tmpDir);
-      this.losRaycaster.far = targetDist;
-
-      const hits = this.losRaycaster.intersectObjects(collidables, false);
-      this.losClear = hits.length === 0 || hits[0].distance >= targetDist - 0.5;
+      if (this.worldCollider) {
+        this.losClear = this.worldCollider.hasLineOfSight(this.tmpMuzzle, this.tmpTarget);
+      } else {
+        if (targetDist > 1e-4) {
+          this.tmpDir.multiplyScalar(1.0 / targetDist);
+          this.losRaycaster.set(this.tmpMuzzle, this.tmpDir);
+          this.losRaycaster.far = targetDist;
+          const hits = this.losRaycaster.intersectObjects(collidables, false);
+          this.losClear = hits.length === 0 || hits[0].distance >= targetDist - 0.5;
+        } else {
+          this.losClear = true;
+        }
+      }
     }
 
     if (!this.losClear) {
       this.cancelAim();
-      return;
+      if (this.alerted && !this.repositionTarget) {
+        this.blockedLosTimer += dt;
+        if (this.blockedLosTimer > 1.8) {
+          this.blockedLosTimer = 0;
+          this.tryRepositionAroundObstacle(playerPos, collidables);
+        }
+      }
+      // If repositioning around an obstacle, let the dash execute below
+      if (!this.repositionTarget) {
+        return;
+      }
+    } else {
+      this.blockedLosTimer = 0;
     }
 
     // Alert sniper
@@ -231,6 +270,16 @@ export class SniperEnemy extends Enemy {
 
     // Face player
     this.facePosition(playerPos);
+
+    // Perch lock: snipers never drift, sink, or hover — Y is the perch floor.
+    if (this.worldCollider) {
+      const perchGround = this.worldCollider.groundAt(
+        this.group.position.x, this.group.position.y, this.group.position.z, 0.6
+      );
+      if (perchGround !== null && Math.abs(perchGround - this.group.position.y) < 1.0) {
+        this.group.position.y = perchGround;
+      }
+    }
 
     // Reposition dash (late waves): telegraph at CURRENT perch for 0.5s with glint, then dash
     if (this.repositionTarget) {
@@ -243,6 +292,12 @@ export class SniperEnemy extends Enemy {
 
         if (this.repositionTelegraphTimer <= 0) {
           this.glintMesh.visible = false;
+          // Re-validate the perch at dash time: floor gone or wall raised = stay.
+          if (!this.validatePerch(this.repositionTarget, collidables)) {
+            this.repositionTarget = null;
+            this.facePosition(playerPos);
+            return;
+          }
         }
         this.facePosition(playerPos);
         return;
@@ -255,10 +310,34 @@ export class SniperEnemy extends Enemy {
         this.repositionTarget = null;
       } else {
         this.tmpDir.normalize();
-        this.group.position.addScaledVector(this.tmpDir, Math.min(9.0 * dt, rd));
+        const step = Math.min(9.0 * this.speedMultiplier * dt, rd);
+        const nx = this.group.position.x + this.tmpDir.x * step;
+        const nz = this.group.position.z + this.tmpDir.z * step;
+        if (this.worldCollider) {
+          // Wall in the dash lane: abort, keep the known-good perch.
+          this.worldCollider.pushOut(nx, nz, 0.55, this.group.position.y, this.group.position.y + 1.8, this.pushScratch);
+          const bx = this.pushScratch.pushed ? this.pushScratch.x : nx;
+          const bz = this.pushScratch.pushed ? this.pushScratch.z : nz;
+          const fg = this.worldCollider.groundAt(bx, this.group.position.y, bz, 0.6);
+          if (this.pushScratch.pushed || fg === null || Math.abs(fg - this.group.position.y) > 1.0) {
+            this.repositionTarget = null;
+            this.facePosition(playerPos);
+            return;
+          }
+          this.group.position.x = bx;
+          this.group.position.z = bz;
+          this.group.position.y = fg;
+        } else {
+          this.group.position.addScaledVector(this.tmpDir, step);
+        }
         this.facePosition(playerPos);
         return;
       }
+    }
+
+    if (!this.losClear) {
+      this.cancelAim();
+      return;
     }
 
     // Spawn grace: track but never shoot during sketch-in (cooldown runs under it)
@@ -287,14 +366,15 @@ export class SniperEnemy extends Enemy {
       this.preCharge = 0;
     }
 
-    // Charge Sniper Laser!
+    // Charge Sniper Laser! (Smoothly chases player like inspiration, letting athletic players dodge)
     this.state = EnemyState.ATTACK;
     this.isAimingAtPlayer = true;
     if (!this.hasChargeSound) {
       this.hasChargeSound = true;
       soundManager.startSniperCharge();
     }
-    this.currentAimTarget.lerp(this.tmpTarget, Math.min(1, dt * 8.0)); // Smooth tracking with slight momentum
+    const trackSpeed = 1 - Math.exp(-3.2 * dt);
+    this.currentAimTarget.lerp(this.tmpTarget, trackSpeed);
     this.chargeTimer += dt;
     soundManager.updateSniperCharge(this.chargeTimer / this.chargeDuration);
 
@@ -303,11 +383,16 @@ export class SniperEnemy extends Enemy {
 
     // 2.0s charge complete: FIRE!
     if (this.chargeTimer >= this.chargeDuration) {
+      // Abort firing if player stepped behind a wall or obstacle
+      if (this.worldCollider && !this.worldCollider.hasLineOfSight(this.tmpMuzzle, this.currentAimTarget)) {
+        this.cancelAim();
+        return;
+      }
       if (this.hasChargeSound) {
         this.hasChargeSound = false;
         soundManager.stopSniperCharge();
       }
-      this.fireSniperShot(this.tmpMuzzle, this.tmpTarget, collidables);
+      this.fireSniperShot(this.tmpMuzzle, this.currentAimTarget, collidables);
       this.chargeTimer = 0;
       this.shotCooldownTimer = this.shotCooldown;
       this.cancelAim();
@@ -323,10 +408,32 @@ export class SniperEnemy extends Enemy {
   private updateLaserSight(startWorld: THREE.Vector3, endWorld: THREE.Vector3, opacityCap: number = 1.0): void {
     this.laserLine.visible = true;
 
+    // Clamp laser beam to solid obstacles/walls if world collider is present
+    let beamEnd = endWorld;
+    if (this.worldCollider) {
+      this.tmpDir.copy(endWorld).sub(startWorld);
+      const beamDist = this.tmpDir.length();
+      if (beamDist > 1e-4) {
+        this.tmpDir.multiplyScalar(1.0 / beamDist);
+        const wallHit = this.worldCollider.raycast(startWorld, this.tmpDir, beamDist);
+        if (wallHit && wallHit.dist < beamDist) {
+          beamEnd = wallHit.point;
+        }
+      }
+    }
+
     // Transform points into local sniper space (reused temps)
     const startLocal = this.tmpStartLocal.copy(startWorld);
     this.group.worldToLocal(startLocal);
-    const endLocal = this.tmpEndLocal.copy(endWorld);
+
+    // Pull beam back slightly before the target so it doesn't clip directly into the camera (inspiration)
+    const dist = beamEnd.distanceTo(startWorld);
+    if (dist > 2.0) {
+      this.tmpEndLocal.copy(startWorld).lerp(beamEnd, (dist - 1.5) / dist);
+    } else {
+      this.tmpEndLocal.copy(beamEnd);
+    }
+    const endLocal = this.tmpEndLocal;
     this.group.worldToLocal(endLocal);
 
     const posAttr = this.laserGeometry.attributes.position as THREE.BufferAttribute;
@@ -366,6 +473,23 @@ export class SniperEnemy extends Enemy {
     this.preCharge = 0;
   }
 
+  private validatePerch(candidate: THREE.Vector3, collidables: THREE.Mesh[]): boolean {
+    if (this.worldCollider) {
+      this.worldCollider.pushOut(candidate.x, candidate.z, 0.55, candidate.y, candidate.y + 1.8, this.pushScratch);
+      if (this.pushScratch.pushed) return false;
+      const g = this.worldCollider.groundAt(candidate.x, candidate.y, candidate.z, 0.8);
+      if (g === null || Math.abs(g - candidate.y) > 1.0) return false;
+      candidate.y = g;
+      return true;
+    }
+    this.tmpDown.copy(candidate);
+    this.tmpDown.y += 1.0;
+    this.tmpDir.set(0, -1, 0);
+    this.losRaycaster.set(this.tmpDown, this.tmpDir);
+    this.losRaycaster.far = 5.0;
+    return this.losRaycaster.intersectObjects(collidables, false).length > 0;
+  }
+
   /**
    * Fires the high-powered red sniper shot.
    * Late-wave repositioning only targets real footing: a down-ray from the
@@ -375,11 +499,19 @@ export class SniperEnemy extends Enemy {
   private fireSniperShot(origin: THREE.Vector3, target: THREE.Vector3, collidables: THREE.Mesh[]): void {
     this.tmpDir.copy(target).sub(origin).normalize();
 
+    // Spread scales with player speed (inspired by inspiration's const sp = spread * (1 + P.speed * 0.06))
+    const pSpeed = this.playerSpeed || 0;
+    const spread = 0.006 * (1.0 + pSpeed * 0.06);
+    this.tmpDir.x += (Math.random() - 0.5) * spread;
+    this.tmpDir.y += (Math.random() - 0.5) * spread;
+    this.tmpDir.z += (Math.random() - 0.5) * spread;
+    this.tmpDir.normalize();
+
     this.pendingProjectiles.push({
       origin: origin.clone(),
       direction: this.tmpDir.clone(),
       speed: 130.0, // High-velocity tracer
-      damage: 22, // Heavy sniper hit — was 45 (two-shot kill), tuned for fairness
+      damage: Math.max(1, Math.round(22 * this.damageMultiplier)),
       radius: 0.28,
       maxDistance: 130.0,
       isSniper: true,
@@ -401,18 +533,43 @@ export class SniperEnemy extends Enemy {
       const candidate = this.group.position.clone().add(
         new THREE.Vector3(-side.z * dir * dist, 0, side.x * dir * dist)
       );
-      this.tmpDown.copy(candidate);
-      this.tmpDown.y += 1.0;
-      this.tmpDir.set(0, -1, 0);
-      this.losRaycaster.set(this.tmpDown, this.tmpDir);
-      this.losRaycaster.far = 5.0;
-      if (this.losRaycaster.intersectObjects(collidables, false).length > 0) {
+      if (this.validatePerch(candidate, collidables)) {
         this.repositionTarget = candidate;
         this.repositionTelegraphTimer = 0.5;
         soundManager.playSniperRelocate();
       }
       this.shotsFired = 0;
     }
+  }
+
+  /**
+   * Shifts perch position along rooftop or vantage beam when line of sight is obstructed by an obstacle
+   */
+  private tryRepositionAroundObstacle(playerPos: THREE.Vector3, collidables: THREE.Mesh[]): boolean {
+    const myPos = this.group.position;
+    this.tmpFlat.set(playerPos.x - myPos.x, 0, playerPos.z - myPos.z);
+    const len = this.tmpFlat.length();
+    if (len < 0.01) return false;
+    const sideX = -this.tmpFlat.z / len;
+    const sideZ = this.tmpFlat.x / len;
+
+    // Test lateral offsets on current roof/beam (left and right)
+    const offsets = [4.5, -4.5, 7.0, -7.0];
+    for (let i = 0; i < offsets.length; i++) {
+      const d = offsets[i];
+      this.tmpCandidatePerch.set(
+        myPos.x + sideX * d,
+        myPos.y,
+        myPos.z + sideZ * d
+      );
+      if (this.validatePerch(this.tmpCandidatePerch, collidables)) {
+        this.repositionTarget = this.tmpCandidatePerch.clone();
+        this.repositionTelegraphTimer = 0.4;
+        soundManager.playSniperRelocate();
+        return true;
+      }
+    }
+    return false;
   }
 
   private facePosition(target: THREE.Vector3): void {
@@ -431,10 +588,10 @@ export class SniperEnemy extends Enemy {
     this.cancelAim();
   }
 
-  public override die(hitPoint?: THREE.Vector3, isHeadshot?: boolean): void {
+  public override die(hitPoint?: THREE.Vector3, isHeadshot?: boolean, hitDirection?: THREE.Vector3): void {
     if (this.glintMesh) this.glintMesh.visible = false;
     this.repositionTelegraphTimer = 0;
-    super.die(hitPoint, isHeadshot);
+    super.die(hitPoint, isHeadshot, hitDirection);
     this.cancelAim();
   }
 

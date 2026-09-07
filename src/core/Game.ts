@@ -29,10 +29,21 @@ export class Game {
   private totalScore: number = 0;
   private wasLocked: boolean = true;
 
-  private readonly paperColor = new THREE.Color(0xfaf7ee);
+  // Hitstop (micro-pause / time-dilation on heavy crits/kills for massive punch)
+  private hitstopTimer: number = 0;
+  private hitstopScale: number = 1.0;
+
+  public triggerHitstop(duration: number = 0.05, timeScale: number = 0.15): void {
+    this.hitstopTimer = Math.max(this.hitstopTimer, duration);
+    this.hitstopScale = timeScale;
+  }
+
+  private readonly paperColor = new THREE.Color(0xf5eedd);
   private tmpMuzzle: THREE.Vector3 = new THREE.Vector3();
   private tmpEnd: THREE.Vector3 = new THREE.Vector3();
   private tmpLook: THREE.Vector3 = new THREE.Vector3();
+  private tmpRight: THREE.Vector3 = new THREE.Vector3();
+  private static readonly UP_VEC: THREE.Vector3 = new THREE.Vector3(0, 1, 0);
   private hoverRay: THREE.Raycaster = new THREE.Raycaster();
   private combatTargets: THREE.Object3D[] = [];
   private webAnchors: THREE.Vector3[] = [];
@@ -47,7 +58,7 @@ export class Game {
   constructor() {
     this.scene = new THREE.Scene();
     this.scene.background = this.paperColor;
-    this.scene.fog = new THREE.FogExp2(0xfaf7ee, 0.0055);
+    this.scene.fog = new THREE.FogExp2(0xf5eedd, 0.0055);
 
     this.camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 800);
     this.scene.add(this.camera);
@@ -74,6 +85,7 @@ export class Game {
     this.scene.add(this.cityBuilder.group);
 
     this.particles = new InkParticles();
+    this.particles.bindCollider(this.cityBuilder.getWorldCollider());
     this.scene.add(this.particles.getGroup());
 
     // Web line was never added to the scene — swinging was invisible
@@ -81,6 +93,7 @@ export class Game {
 
     this.enemyManager = new EnemyManager(this.scene, this.particles);
     this.enemyManager.collidableMeshes = this.cityBuilder.getCollidableMeshes();
+    this.enemyManager.bindCollider(this.cityBuilder.getWorldCollider());
     this.enemyManager.onPlayerDamaged = (pos) => this.hud.noteDamageFrom(pos);
 
     // Simplified collision shells (no more walking through buildings)
@@ -101,11 +114,15 @@ export class Game {
 
     // HUD wave flow + rewards
     this.enemyManager.onWaveStart = (wave) => {
-      const titles = ['INK INVASION BEGINS', 'THE SKETCH FIGHTS BACK', 'RED INK RISING'];
+      const titles = ['INK INVASION BEGINS', 'THE SKETCH FIGHTS BACK', 'RED INK RISING', 'RELENTLESS SQUAD', 'APEX DRAWING'];
       const comp = this.enemyManager.compositionFor ? this.enemyManager.compositionFor(wave) : this.enemyManager.peekNextWave();
+      const mod = this.enemyManager.activeModifier;
+      const subtitle = (mod && mod.name)
+        ? `${mod.name} · ${mod.description}`
+        : (titles[Math.min(wave - 1, titles.length - 1)] ?? 'ELIMINATE ALL INK HOSTILES');
       this.hud.showWaveAnnouncement(
         wave,
-        titles[Math.min(wave - 1, titles.length - 1)] ?? 'ELIMINATE ALL INK HOSTILES',
+        subtitle,
         comp
       );
     };
@@ -121,12 +138,13 @@ export class Game {
       soundManager.playEnemyDeath();
     };
 
-    const ambientLight = new THREE.AmbientLight(0xffffff, 0.85);
+    const ambientLight = new THREE.AmbientLight(0xfff3db, 0.90);
     this.scene.add(ambientLight);
 
-    const sunLight = new THREE.DirectionalLight(0xfffdf5, 1.1);
-    sunLight.position.set(60, 140, 80);
+    const sunLight = new THREE.DirectionalLight(0xffeecc, 1.15);
+    sunLight.position.set(40, 75, 45);
     this.scene.add(sunLight);
+    InkShaderMaterial.setLightDirection(sunLight.position);
 
     window.addEventListener('resize', () => this.onResize());
 
@@ -136,20 +154,25 @@ export class Game {
         if (modal) modal.style.display = 'none';
         this.hud.setPaused(false);
         soundManager.ensureContext();
+        if (typeof document !== 'undefined') document.body.classList.add('in-game');
       } else if (locked) {
         // Locked but the game was never started (early click path): keep the
         // menu up so the player can never strand themselves in a frozen frame.
         if (modal) modal.style.display = 'flex';
         this.hud.setPaused(false);
+        if (typeof document !== 'undefined') document.body.classList.remove('in-game');
       } else if (this.player.isDead) {
         if (modal) modal.style.display = 'flex';
         this.hud.setPaused(false);
+        if (typeof document !== 'undefined') document.body.classList.remove('in-game');
       } else if (this.isRunning) {
         if (modal) modal.style.display = 'none';
         this.hud.setPaused(true);
+        if (typeof document !== 'undefined') document.body.classList.remove('in-game');
       } else {
         if (modal) modal.style.display = 'flex';
         this.hud.setPaused(false);
+        if (typeof document !== 'undefined') document.body.classList.remove('in-game');
       }
     };
 
@@ -188,7 +211,7 @@ export class Game {
     if (!Game.bootErrorEl) {
       const el = document.createElement('pre');
       el.id = 'spidey-boot-error';
-      el.style.cssText = 'position:fixed;left:12px;bottom:12px;z-index:999;max-width:60ch;max-height:30vh;overflow:auto;background:#d63031;color:#faf7ee;padding:10px 14px;font:12px monospace;white-space:pre-wrap;border:2px solid #152778;';
+      el.style.cssText = 'position:fixed;left:12px;bottom:12px;z-index:999;max-width:60ch;max-height:30vh;overflow:auto;background:#d63031;color:#f5eedd;padding:10px 14px;font:12px monospace;white-space:pre-wrap;border:2px solid #152778;';
       document.body.appendChild(el);
       Game.bootErrorEl = el;
     }
@@ -232,10 +255,12 @@ export class Game {
       // Re-lock flow after ESC pause
       this.input.requestPointerLock();
       this.lastTime = performance.now();
+      if (typeof document !== 'undefined') document.body.classList.add('in-game');
       return;
     }
     this.isRunning = true;
     this.lastTime = performance.now();
+    if (typeof document !== 'undefined') document.body.classList.add('in-game');
 
     this.enemyManager.startNextWave(this.player.health);
 
@@ -257,8 +282,14 @@ export class Game {
     requestAnimationFrame((t) => this.loop(t));
 
     try {
-      const dt = Math.min((now - this.lastTime) * 0.001, 0.05);
+      let dt = Math.min((now - this.lastTime) * 0.001, 0.05);
       this.lastTime = now;
+
+      // Hitstop time dilation on heavy impacts
+      if (this.hitstopTimer > 0) {
+        this.hitstopTimer -= dt;
+        dt *= this.hitstopScale;
+      }
 
       // Pause simulation when pointer unlocked (ESC) — still render + HUD
       const locked = this.input.isPlaying;
@@ -320,9 +351,44 @@ export class Game {
     const fireResult: FireResult | null = this.player.update(dt, collidables, combatTargets, this.webAnchors);
 
     if (fireResult) {
-      // Muzzle flash at the barrel tip (converged aim still comes from the camera)
-      this.player.weaponManager.activeWeapon.muzzleTip.getWorldPosition(this.tmpMuzzle);
-      this.particles.triggerMuzzleFlash(this.tmpMuzzle, fireResult.ray.direction);
+      const wep = fireResult.weapon ?? this.player.weaponManager.activeWeapon;
+
+      if (wep.type === 'sword') {
+        // Sword / Katana dynamic slash arc and haptic rumble
+        this.player.camera.getWorldDirection(this.tmpLook);
+        this.tmpRight.crossVectors(this.tmpLook, Game.UP_VEC).normalize();
+        this.particles.spawnSlashArc(
+          this.player.camera.position,
+          this.tmpLook,
+          this.tmpRight,
+          (wep as any).combo ?? 0
+        );
+        this.input.rumble(0.65, 0.45, 90);
+      } else {
+        // Muzzle sparks and smoke at barrel crown (converged aim still comes from camera)
+        wep.muzzleTip.getWorldPosition(this.tmpMuzzle);
+        this.particles.spawnMuzzleSparks(
+          this.tmpMuzzle,
+          fireResult.ray.direction,
+          wep.type === 'sniper' ? 14 : (wep.type === 'smg' ? 6 : 9),
+          wep.flashColorHex
+        );
+        this.particles.spawnMuzzleSmoke(
+          this.tmpMuzzle,
+          fireResult.ray.direction,
+          wep.type === 'sniper' ? 5 : 2
+        );
+
+        // Gamepad haptic rumble on gunshot
+        this.input.rumble(
+          wep.type === 'sniper' ? 0.75 : (wep.type === 'smg' ? 0.25 : 0.45),
+          0.5,
+          wep.type === 'sniper' ? 140 : 60
+        );
+      }
+
+      const tracerThickness = wep.tracerThickness;
+      const tracerColor = wep.tracerColor;
 
       const hitReport = this.enemyManager.checkBulletHits(
         fireResult,
@@ -331,18 +397,38 @@ export class Game {
       );
 
       if (hitReport) {
-        // Tracer to flesh so hits read clearly
-        if (fireResult.point) this.particles.spawnTracer(this.tmpMuzzle, fireResult.point);
-        soundManager.playHitMarker(hitReport.isHeadshot);
+        // Bold 3D tracer to flesh so gunshot hits read clearly
+        if (wep.type !== 'sword' && fireResult.point) {
+          this.particles.spawnTracer(this.tmpMuzzle, fireResult.point, tracerColor, tracerThickness);
+        }
         this.hud.triggerHitmarker(hitReport.isHeadshot, hitReport.killed);
 
+        // Kinetic impact: screen shake & crunchy hitstop on crits / kills
+        if (wep.type === 'sword') {
+          soundManager.playKatanaHit();
+          this.player.addScreenShake(0.12);
+          this.triggerHitstop(0.07, 0.12);
+        } else {
+          soundManager.playHitMarker(hitReport.isHeadshot);
+          if (hitReport.isHeadshot) {
+            this.player.addScreenShake(0.08);
+            this.triggerHitstop(0.05, 0.15);
+          } else {
+            this.player.addScreenShake(0.03);
+          }
+        }
+
         if (hitReport.killed && hitReport.killEvent) {
+          this.player.addScreenShake(0.14);
+          this.triggerHitstop(0.07, 0.12);
           const k = hitReport.killEvent;
           this.totalScore += k.scoreAwarded;
           soundManager.playKillStreak(k.killStreak);
 
           let tag = hitReport.isHeadshot ? 'HEADSHOT' : 'INK ERASURE';
-          if (k.isSwinging) {
+          if (wep.type === 'sword') {
+            tag = k.isSwinging ? 'AERIAL SLICE' : 'SLICED';
+          } else if (k.isSwinging) {
             tag = 'SWING KILL';
           } else if (k.distance > 45) {
             tag = 'LONGSHOT';
@@ -355,11 +441,14 @@ export class Game {
         }
       } else if (fireResult.hit && fireResult.point && fireResult.normal) {
         this.particles.spawnWallImpact(fireResult.point, fireResult.normal);
+        this.player.addScreenShake(wep.type === 'sword' ? 0.04 : 0.02);
         soundManager.playImpactWall();
-        this.particles.spawnTracer(this.tmpMuzzle, fireResult.point);
-      } else {
+        if (wep.type !== 'sword') {
+          this.particles.spawnTracer(this.tmpMuzzle, fireResult.point, tracerColor, tracerThickness);
+        }
+      } else if (wep.type !== 'sword') {
         this.tmpEnd.copy(fireResult.ray.origin).addScaledVector(fireResult.ray.direction, 80);
-        this.particles.spawnTracer(this.tmpMuzzle, this.tmpEnd);
+        this.particles.spawnTracer(this.tmpMuzzle, this.tmpEnd, tracerColor, tracerThickness);
       }
     }
 
@@ -480,6 +569,7 @@ export class Game {
 
   public resetToMenu(): void {
     this.isRunning = false;
+    if (typeof document !== 'undefined') document.body.classList.remove('in-game');
     this.player.reset();
     this.totalScore = 0;
     this.lastPreviewKey = -1;

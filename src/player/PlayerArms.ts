@@ -120,57 +120,14 @@ export class PlayerArms {
     this.leftArm.rotation.set(-0.1, 0.15, 0.1);
     this.armsGroup.add(this.leftArm);
 
-    // ==========================================
-    // 2. RIGHT ARM (Weapon Grip Arm)
-    // ==========================================
-    const rightForearm = new THREE.Mesh(forearmGeom, suitMat);
-    rightForearm.rotation.x = Math.PI / 2.2;
-    rightForearm.position.set(0, -0.02, -0.12);
-    rightForearm.add(InkShaderMaterial.createEdgeLines(forearmGeom));
-    this.rightArm.add(rightForearm);
-
-    // Right Wrist Gauntlet
-    const rightGauntlet = new THREE.Mesh(gauntletGeom, gauntletMat);
-    rightGauntlet.rotation.x = Math.PI / 2.2;
-    rightGauntlet.position.set(0, 0.03, -0.22);
-    rightGauntlet.add(InkShaderMaterial.createEdgeLines(gauntletGeom));
-    this.rightArm.add(rightGauntlet);
-
-    // Right Hand Palm (gripping handle)
-    const rightPalm = new THREE.Mesh(palmGeom, suitMat);
-    rightPalm.position.set(0, 0.04, -0.28);
-    rightPalm.add(InkShaderMaterial.createEdgeLines(palmGeom));
-
-    const rightKnuckleCrease = new THREE.Mesh(knuckleCreaseGeom, suitMat);
-    rightKnuckleCrease.position.set(0, 0.02, -0.018);
-    rightKnuckleCrease.add(InkShaderMaterial.createEdgeLines(knuckleCreaseGeom));
-    rightPalm.add(rightKnuckleCrease);
-
-    this.rightHandGroup.add(rightPalm);
-
-    // Curled fingers wrapped around weapon grip
-    const curledFingersGeom = new THREE.BoxGeometry(0.065, 0.035, 0.05);
-    const rightFingers = new THREE.Mesh(curledFingersGeom, suitMat);
-    rightFingers.position.set(0.015, 0.02, -0.32);
-    rightFingers.rotation.x = 0.5;
-    rightFingers.add(InkShaderMaterial.createEdgeLines(curledFingersGeom));
-    this.rightHandGroup.add(rightFingers);
-
-    // Thumb wrapped over top
-    const thumbGeom = new THREE.BoxGeometry(0.02, 0.02, 0.04);
-    const rightThumb = new THREE.Mesh(thumbGeom, suitMat);
-    rightThumb.position.set(-0.035, 0.06, -0.28);
-    rightThumb.rotation.z = -0.4;
-    rightThumb.add(InkShaderMaterial.createEdgeLines(thumbGeom));
-    this.rightHandGroup.add(rightThumb);
-
-    this.rightArm.add(this.rightHandGroup);
-
-    // Default rest position (lower right quadrant, aligned with weapon grip)
-    this.rightArm.position.set(0.20, -0.16, -0.36);
-    this.rightArm.rotation.set(0.02, -0.08, -0.05);
-    this.armsGroup.add(this.rightArm);
+    // Right arm is left empty so the right side exclusively displays
+    // the active weapon (sword, pistol, rifle, sniper) without any overlapping arm or right-side web slinger.
+    this.rightArm.clear();
   }
+
+  // Scratch vectors for zero-allocation per-frame arm updates
+  private static readonly targetLeftPos: THREE.Vector3 = new THREE.Vector3();
+  private static readonly targetLeft: THREE.Vector3 = new THREE.Vector3();
 
   /**
    * Get world position where web line attaches to player's left wrist
@@ -186,7 +143,7 @@ export class PlayerArms {
     dt: number,
     isSwinging: boolean,
     webAnchorPos: THREE.Vector3 | null,
-    cameraPos: THREE.Vector3,
+    _cameraPos: THREE.Vector3,
     isMoving: boolean,
     _moveSpeed: number
   ): void {
@@ -195,8 +152,8 @@ export class PlayerArms {
     if (isSwinging && webAnchorPos) {
       // DYNAMIC SWINGING POSE:
       // Left arm raises high up, reaching toward the anchor holding the web line taut!
-      const targetLeftPos = new THREE.Vector3(-0.14, 0.12, -0.36);
-      this.leftArm.position.lerp(targetLeftPos, dt * 14.0);
+      PlayerArms.targetLeftPos.set(-0.14, 0.12, -0.36);
+      this.leftArm.position.lerp(PlayerArms.targetLeftPos, dt * 14.0);
 
       // Angle left arm upward toward anchor
       this.leftArm.rotation.x = THREE.MathUtils.lerp(this.leftArm.rotation.x, -0.75, dt * 14.0);
@@ -207,19 +164,14 @@ export class PlayerArms {
       this.leftIndexFinger.rotation.x = -0.3;
       this.leftPinkyFinger.rotation.x = -0.3;
       this.leftMiddleFingers.rotation.x = 0.6;
-
-      // Right arm stays ready, holding weapon
-      this.rightArm.position.lerp(new THREE.Vector3(0.18, -0.14, -0.36), dt * 12.0);
-      this.rightArm.rotation.x = THREE.MathUtils.lerp(this.rightArm.rotation.x, 0.05, dt * 12.0);
-      this.rightArm.rotation.y = THREE.MathUtils.lerp(this.rightArm.rotation.y, -0.05, dt * 12.0);
     } else {
       // GROUND / AIR TRAVERSAL POSE:
       // Natural walking breathing sway
       const idleBobY = Math.sin(time * 2.2) * (isMoving ? 0.016 : 0.004);
       const idleBobX = Math.cos(time * 1.1) * (isMoving ? 0.014 : 0.002);
 
-      const targetLeft = new THREE.Vector3(-0.22 + idleBobX, -0.18 + idleBobY, -0.34);
-      this.leftArm.position.lerp(targetLeft, dt * 10.0);
+      PlayerArms.targetLeft.set(-0.22 + idleBobX, -0.18 + idleBobY, -0.34);
+      this.leftArm.position.lerp(PlayerArms.targetLeft, dt * 10.0);
       this.leftArm.rotation.x = THREE.MathUtils.lerp(this.leftArm.rotation.x, -0.12, dt * 10.0);
       this.leftArm.rotation.y = THREE.MathUtils.lerp(this.leftArm.rotation.y, 0.12, dt * 10.0);
       this.leftArm.rotation.z = THREE.MathUtils.lerp(this.leftArm.rotation.z, 0.08, dt * 10.0);
@@ -228,13 +180,6 @@ export class PlayerArms {
       this.leftIndexFinger.rotation.x = 0.15;
       this.leftPinkyFinger.rotation.x = 0.2;
       this.leftMiddleFingers.rotation.x = 0.25;
-
-      // Right arm follows weapon grip
-      const targetRight = new THREE.Vector3(0.20 - idleBobX, -0.16 + idleBobY, -0.36);
-      this.rightArm.position.lerp(targetRight, dt * 12.0);
-      this.rightArm.rotation.x = THREE.MathUtils.lerp(this.rightArm.rotation.x, 0.02, dt * 12.0);
-      this.rightArm.rotation.y = THREE.MathUtils.lerp(this.rightArm.rotation.y, -0.06, dt * 12.0);
-      this.rightArm.rotation.z = THREE.MathUtils.lerp(this.rightArm.rotation.z, -0.04, dt * 12.0);
     }
   }
 }

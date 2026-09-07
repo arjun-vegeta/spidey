@@ -55,9 +55,26 @@ export class InputManager {
     this.fovRatio = Math.max(0.01, Math.min(2.0, fovRatio));
   }
 
-  constructor(domElement: HTMLElement = document.body) {
-    this.domElement = domElement;
-    this.setupListeners();
+  constructor(domElement?: HTMLElement) {
+    this.domElement = domElement ?? (typeof document !== 'undefined' ? document.body : ({} as HTMLElement));
+    if (typeof window !== 'undefined' && typeof document !== 'undefined') {
+      this.setupListeners();
+    }
+  }
+
+  public clearState(): void {
+    this.keys = {};
+    this.mouseButtons = {};
+    this.mouseDelta.x = 0;
+    this.mouseDelta.y = 0;
+    this.mouseWheelDelta = 0;
+    this.fireJustPressed = false;
+    this.webJustPressed = false;
+    this.webZipJustPressed = false;
+    this.jumpJustPressed = false;
+    this.reloadJustPressed = false;
+    this.zoomJustPressed = false;
+    this.weaponSwitchIndex = -1;
   }
 
   private setupListeners(): void {
@@ -69,8 +86,17 @@ export class InputManager {
     window.addEventListener('wheel', (e) => this.onWheel(e), { passive: true });
     window.addEventListener('contextmenu', (e) => e.preventDefault());
 
+    // Window focus / visibility safeguards so keys never get stuck on alt-tab or blur
+    window.addEventListener('blur', () => this.clearState());
+    document.addEventListener('visibilitychange', () => {
+      if (document.hidden) this.clearState();
+    });
+
     document.addEventListener('pointerlockchange', () => {
       this.isLocked = document.pointerLockElement === this.domElement;
+      if (!this.isLocked) {
+        this.clearState();
+      }
       if (this.onLockChange) {
         this.onLockChange(this.isLocked);
       }
@@ -107,25 +133,48 @@ export class InputManager {
   }
 
   private onKeyDown(e: KeyboardEvent): void {
-    const key = e.key.toLowerCase();
-    if (!this.keys[key]) {
-      // Just pressed checks
-      if (key === ' ' || key === 'space') this.jumpJustPressed = true;
-      if (key === 'r') this.reloadJustPressed = true;
-      if (key === 'f') this.webZipJustPressed = true;
-      if (key === 'e') this.webJustPressed = true;
-      if (key === 'q') this.zoomJustPressed = true;
-      if (key === 'v' || key === 'enter') this.fireJustPressed = true;
-
-      if (key === '1') this.weaponSwitchIndex = 0;
-      if (key === '2') this.weaponSwitchIndex = 1;
-      if (key === '3') this.weaponSwitchIndex = 2;
+    // Mac Command/Meta key press or shortcut suppresses keyup events; clear state to prevent stuck keys
+    if (e.key === 'Meta' || e.code === 'MetaLeft' || e.code === 'MetaRight') {
+      this.clearState();
+      return;
     }
-    this.keys[key] = true;
+
+    const key = e.key ? e.key.toLowerCase() : '';
+    const code = e.code ? e.code.toLowerCase() : '';
+
+    if ((key && !this.keys[key]) || (code && !this.keys[code])) {
+      // Just pressed checks
+      if (key === ' ' || key === 'space' || code === 'space') this.jumpJustPressed = true;
+      if (key === 'r' || code === 'keyr') this.reloadJustPressed = true;
+      if (key === 'f' || code === 'keyf') this.webZipJustPressed = true;
+      if (key === 'e' || code === 'keye') this.webJustPressed = true;
+      if (key === 'q' || code === 'keyq') this.zoomJustPressed = true;
+      if (key === 'v' || code === 'keyv' || key === 'enter' || code === 'enter') this.fireJustPressed = true;
+
+      if (key === '1' || code === 'digit1') this.weaponSwitchIndex = 0;
+      if (key === '2' || code === 'digit2') this.weaponSwitchIndex = 1;
+      if (key === '3' || code === 'digit3') this.weaponSwitchIndex = 2;
+      if (key === '4' || code === 'digit4') this.weaponSwitchIndex = 3;
+    }
+    if (key) this.keys[key] = true;
+    if (code) this.keys[code] = true;
+    if (!e.shiftKey) {
+      this.keys['shift'] = false;
+      this.keys['shiftleft'] = false;
+      this.keys['shiftright'] = false;
+    }
   }
 
   private onKeyUp(e: KeyboardEvent): void {
-    this.keys[e.key.toLowerCase()] = false;
+    const key = e.key ? e.key.toLowerCase() : '';
+    const code = e.code ? e.code.toLowerCase() : '';
+    if (key) this.keys[key] = false;
+    if (code) this.keys[code] = false;
+    if (!e.shiftKey) {
+      this.keys['shift'] = false;
+      this.keys['shiftleft'] = false;
+      this.keys['shiftright'] = false;
+    }
   }
 
   private onMouseDown(e: MouseEvent): void {
@@ -181,17 +230,40 @@ export class InputManager {
   }
 
   // Helper getters
-  public isMovingForward(): boolean { return !!(this.keys['w'] || this.keys['arrowup']); }
-  public isMovingBackward(): boolean { return !!(this.keys['s'] || this.keys['arrowdown']); }
-  public isMovingLeft(): boolean { return !!(this.keys['a'] || this.keys['arrowleft']); }
-  public isMovingRight(): boolean { return !!(this.keys['d'] || this.keys['arrowright']); }
-  public isJumping(): boolean { return !!this.keys[' ']; }
-  public isJumpHeld(): boolean { return !!this.keys[' ']; }
-  public isSprintHeld(): boolean { return !!this.keys['shift']; }
-  public isCrouchHeld(): boolean { return !!this.keys['c']; }
-  public isReelingIn(): boolean { return !!(this.keys['shift'] || this.keys['c']); }
-  public isReelingOut(): boolean { return !!(this.keys['control'] || this.keys['x']); }
-  public isDiving(): boolean { return !!(this.keys['control'] || this.keys['x']); }
-  public isFiring(): boolean { return !!(this.mouseButtons[0] || this.keys['v'] || this.keys['enter']); }
-  public isZoomHolding(): boolean { return !!(this.keys['q'] || this.mouseButtons[1]); }
+  public isMovingForward(): boolean { return !!(this.keys['w'] || this.keys['arrowup'] || this.keys['keyw']); }
+  public isMovingBackward(): boolean { return !!(this.keys['s'] || this.keys['arrowdown'] || this.keys['keys']); }
+  public isMovingLeft(): boolean { return !!(this.keys['a'] || this.keys['arrowleft'] || this.keys['keya']); }
+  public isMovingRight(): boolean { return !!(this.keys['d'] || this.keys['arrowright'] || this.keys['keyd']); }
+  public isJumping(): boolean { return !!(this.keys[' '] || this.keys['space']); }
+  public isJumpHeld(): boolean { return !!(this.keys[' '] || this.keys['space']); }
+  public isSprintHeld(): boolean { return !!(this.keys['shift'] || this.keys['shiftleft'] || this.keys['shiftright']); }
+  public isCrouchHeld(): boolean { return !!(this.keys['c'] || this.keys['keyc'] || this.keys['control'] || this.keys['controlleft']); }
+  public isReelingIn(): boolean { return !!(this.keys['shift'] || this.keys['shiftleft'] || this.keys['shiftright'] || this.keys['c'] || this.keys['keyc']); }
+  public isReelingOut(): boolean { return !!(this.keys['control'] || this.keys['controlleft'] || this.keys['controlright'] || this.keys['x'] || this.keys['keyx']); }
+  public isFiring(): boolean { return !!(this.mouseButtons[0] || this.keys['v'] || this.keys['keyv'] || this.keys['enter']); }
+  public isZoomHolding(): boolean { return !!(this.keys['q'] || this.keys['keyq'] || this.mouseButtons[1] || this.mouseButtons[2]); }
+  public isDiving(): boolean { return !!(this.keys['control'] || this.keys['controlleft'] || this.keys['controlright'] || this.keys['x'] || this.keys['keyx']); }
+
+  /**
+   * Gamepad vibration haptic rumble feedback (zero-alloc, fails gracefully).
+   */
+  public rumble(strong: number = 0.5, weak: number = 0.5, ms: number = 80): void {
+    if (typeof navigator === 'undefined' || typeof navigator.getGamepads !== 'function') return;
+    try {
+      const pads = navigator.getGamepads();
+      if (!pads) return;
+      for (let i = 0; i < pads.length; i++) {
+        const pad = pads[i];
+        if (pad && (pad as any).vibrationActuator) {
+          (pad as any).vibrationActuator.playEffect('dual-rumble', {
+            duration: ms,
+            strongMagnitude: Math.min(1, Math.max(0, strong)),
+            weakMagnitude: Math.min(1, Math.max(0, weak)),
+          });
+        }
+      }
+    } catch {
+      // Ignore if vibration unavailable or unsupported
+    }
+  }
 }

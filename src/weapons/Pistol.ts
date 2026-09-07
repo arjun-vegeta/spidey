@@ -36,6 +36,15 @@ export class Pistol extends BaseWeapon {
   public readonly reloadTime = 1.1;
   public readonly flavorText = 'tactical ballpoint sidearm · single-handed · swing & shoot enabled';
 
+  // Tactile shooting feel: snappy upward pop, tight tracer, vibrant muzzle star
+  public override camKick: [number, number] = [0.036, 0.008];
+  public override fovKick: number = 2.2;
+  public override shakeAmount: number = 0.065;
+  public override tracerThickness: number = 0.04;
+  public override tracerColor: THREE.Color = new THREE.Color(0x2e86de);
+  public override flashScale: number = 1.1;
+  public override flashColorHex: number = 0xff9f43;
+
   public isAiming: boolean = false;
 
   constructor() {
@@ -148,6 +157,7 @@ export class Pistol extends BaseWeapon {
     // Muzzle socket at barrel crown for flash + tracer origin
     this.muzzleTip.position.set(0, 0.042, -0.22);
     this.modelGroup.add(this.muzzleTip);
+    this.initMuzzleFlash();
 
     this.modelGroup.scale.set(1.15, 1.15, 1.15);
   }

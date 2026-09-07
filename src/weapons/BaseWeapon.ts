@@ -10,6 +10,7 @@ export interface FireResult {
   isHeadshot: boolean;
   target?: any;
   ray: THREE.Ray;
+  weapon?: BaseWeapon;
 }
 
 export interface FireOptions {
@@ -17,9 +18,60 @@ export interface FireOptions {
   aiming?: boolean;
 }
 
+/**
+ * Creates 3D multi-plane comic starburst geometry for muzzle flashes
+ */
+export function createStarburstGeometry(
+  numPoints: number = 7,
+  rOuter: number = 0.16,
+  rInner: number = 0.06
+): THREE.BufferGeometry {
+  const shape = new THREE.Shape();
+  const total = numPoints * 2;
+  const tau = Math.PI * 2;
+  for (let i = 0; i < total; i++) {
+    const a = (i / total) * tau;
+    const r = i % 2 === 0 ? rOuter : rInner;
+    const x = Math.cos(a) * r;
+    const y = Math.sin(a) * r;
+    if (i === 0) shape.moveTo(x, y);
+    else shape.lineTo(x, y);
+  }
+  shape.closePath();
+  return new THREE.ShapeGeometry(shape);
+}
+
+export function createStarburstGroup(scale: number = 1.0, colorHex: number = 0xff793f): THREE.Group {
+  const group = new THREE.Group();
+  const mat = new THREE.MeshBasicMaterial({
+    color: colorHex,
+    side: THREE.DoubleSide,
+    transparent: true,
+    opacity: 0.95,
+    depthWrite: false
+  });
+
+  const g1 = createStarburstGeometry(7, 0.16, 0.06);
+  group.add(new THREE.Mesh(g1, mat));
+
+  const g2 = createStarburstGeometry(5, 0.12, 0.045);
+  const m2 = new THREE.Mesh(g2, mat);
+  m2.rotation.y = Math.PI / 2;
+  group.add(m2);
+
+  const g3 = createStarburstGeometry(5, 0.11, 0.045);
+  const m3 = new THREE.Mesh(g3, mat);
+  m3.rotation.x = Math.PI / 2;
+  group.add(m3);
+
+  group.scale.setScalar(scale);
+  group.visible = false;
+  return group;
+}
+
 export abstract class BaseWeapon {
   public abstract readonly name: string;
-  public abstract readonly type: 'pistol' | 'smg' | 'sniper';
+  public abstract readonly type: 'pistol' | 'smg' | 'sniper' | 'sword';
   public abstract readonly usableWhileSwinging: boolean;
   public abstract readonly magazineSize: number;
   public abstract readonly maxReserveAmmo: number;
@@ -36,6 +88,22 @@ export abstract class BaseWeapon {
   public abstract readonly falloffStart: number;
   public abstract readonly falloffEnd: number;
   public abstract readonly falloffFloor: number; // Multiplier floor (e.g. 0.6 = 60%, 1.0 = exempt)
+
+  // Camera recoil & Screen shake impulses (inspired by high-juice FPS feel)
+  public camKick: [number, number] = [0.035, 0.008];
+  public fovKick: number = 2.0;
+  public shakeAmount: number = 0.06;
+
+  // Visual 3D Tracer & Muzzle Flash properties
+  public tracerThickness: number = 0.04;
+  public tracerColor: THREE.Color = new THREE.Color(0x1d8cf8);
+  public flashScale: number = 1.0;
+  public flashColorHex: number = 0xff793f; // Comic ink fiery orange
+
+  // 3D Starburst Muzzle Flash mesh attached to muzzleTip
+  public flashMesh: THREE.Group | null = null;
+  public flashDuration: number = 0.045; // ~45ms snappy flash
+  public flashTimer: number = 0;
 
   public currentAmmo: number = 0;
   public reserveAmmo: number = 0;
@@ -57,6 +125,41 @@ export abstract class BaseWeapon {
   }> = [];
 
   constructor() {}
+
+  /**
+   * Initializes the 3D starburst muzzle flash mesh and attaches it to muzzleTip.
+   */
+  public initMuzzleFlash(): void {
+    if (this.flashMesh) return;
+    this.flashMesh = createStarburstGroup(this.flashScale, this.flashColorHex);
+    this.muzzleTip.add(this.flashMesh);
+  }
+
+  /**
+   * Triggers the 3D starburst muzzle flash and emissive weapon material pulse.
+   */
+  public triggerFlash(): void {
+    if (this.flashMesh) {
+      this.flashMesh.visible = true;
+      this.flashMesh.rotation.z = Math.random() * Math.PI * 2;
+      this.flashMesh.scale.setScalar(this.flashScale * (0.85 + Math.random() * 0.45));
+      this.flashTimer = this.flashDuration;
+    }
+    this.setMuzzleFlash(true);
+  }
+
+  /**
+   * Updates muzzle flash visibility timer.
+   */
+  public updateFlash(dt: number): void {
+    if (this.flashTimer > 0) {
+      this.flashTimer -= dt;
+      if (this.flashTimer <= 0) {
+        if (this.flashMesh) this.flashMesh.visible = false;
+        this.setMuzzleFlash(false);
+      }
+    }
+  }
 
   /**
    * Register a weapon material to receive the 1-frame muzzle flash emissive pulse.
@@ -106,7 +209,7 @@ export abstract class BaseWeapon {
 
   public canFire(currentTime: number, isSwinging: boolean): boolean {
     if (this.isReloading) return false;
-    if (this.currentAmmo <= 0) return false;
+    if (this.type !== 'sword' && this.currentAmmo <= 0) return false;
     if (isSwinging && !this.usableWhileSwinging) return false;
 
     const interval = 1.0 / this.fireRate;
@@ -162,6 +265,7 @@ export abstract class BaseWeapon {
 
     this.currentAmmo--;
     this.lastFireTime = currentTime;
+    this.triggerFlash();
 
     // Apply state-driven bullet spread (ADS tightens, motion/swing widens)
     const effSpread = this.spreadFor(!!opts?.moving, !!opts?.aiming, isSwinging);
@@ -226,7 +330,8 @@ export abstract class BaseWeapon {
         damage: finalDamage,
         isHeadshot,
         target: hit.object,
-        ray
+        ray,
+        weapon: this
       };
     }
 
@@ -234,14 +339,20 @@ export abstract class BaseWeapon {
       hit: false,
       damage: 0,
       isHeadshot: false,
-      ray
+      ray,
+      weapon: this
     };
   }
 
   public startReload(): boolean {
+    if (this.type === 'sword') return false;
     if (this.isReloading) return false;
     if (this.currentAmmo >= this.magazineSize) return false;
     if (this.reserveAmmo <= 0) return false;
+
+    if (this.flashMesh) this.flashMesh.visible = false;
+    this.setMuzzleFlash(false);
+    this.flashTimer = 0;
 
     this.isReloading = true;
     this.reloadProgress = 0;

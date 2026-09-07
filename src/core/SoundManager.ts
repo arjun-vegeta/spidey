@@ -417,6 +417,97 @@ export class SoundManager {
   }
 
   /**
+   * Katana / Sword Slash - crisp whistling swoosh through air (inspired by inspiration)
+   */
+  public playKatanaSwing(): void {
+    this.ensureContext();
+    if (!this.ctx || !this.sfxGain) return;
+
+    const now = this.ctx.currentTime;
+    const dur = 0.20;
+    const noise = this.createNoiseBuffer(dur);
+    const src = this.ctx.createBufferSource();
+    src.buffer = noise;
+
+    const filter = this.ctx.createBiquadFilter();
+    filter.type = 'bandpass';
+    filter.frequency.setValueAtTime(500, now);
+    filter.frequency.exponentialRampToValueAtTime(3000, now + dur);
+    filter.Q.setValueAtTime(1.5, now);
+
+    const gain = this.ctx.createGain();
+    gain.gain.setValueAtTime(0.01, now);
+    gain.gain.linearRampToValueAtTime(0.45, now + 0.05);
+    gain.gain.exponentialRampToValueAtTime(0.001, now + dur);
+
+    src.connect(filter);
+    filter.connect(gain);
+    gain.connect(this.sfxGain);
+
+    src.start(now);
+    src.stop(now + dur + 0.02);
+  }
+
+  /**
+   * Katana / Sword Hit - crunchy, meaty ink slice impact (inspired by inspiration)
+   */
+  public playKatanaHit(): void {
+    this.ensureContext();
+    if (!this.ctx || !this.sfxGain) return;
+
+    const now = this.ctx.currentTime;
+
+    // Deep blade body impact tone
+    const osc = this.ctx.createOscillator();
+    const oscGain = this.ctx.createGain();
+    osc.type = 'triangle';
+    osc.frequency.setValueAtTime(180, now);
+    osc.frequency.exponentialRampToValueAtTime(65, now + 0.12);
+    oscGain.gain.setValueAtTime(0.55, now);
+    oscGain.gain.exponentialRampToValueAtTime(0.001, now + 0.12);
+
+    // Meaty lowpass thud
+    const noise1 = this.createNoiseBuffer(0.14);
+    const src1 = this.ctx.createBufferSource();
+    src1.buffer = noise1;
+    const filter1 = this.ctx.createBiquadFilter();
+    filter1.type = 'lowpass';
+    filter1.frequency.setValueAtTime(900, now);
+    filter1.frequency.exponentialRampToValueAtTime(200, now + 0.14);
+    const gain1 = this.ctx.createGain();
+    gain1.gain.setValueAtTime(0.65, now);
+    gain1.gain.exponentialRampToValueAtTime(0.001, now + 0.14);
+
+    // Sharp ink slice friction
+    const noise2 = this.createNoiseBuffer(0.10);
+    const src2 = this.ctx.createBufferSource();
+    src2.buffer = noise2;
+    const filter2 = this.ctx.createBiquadFilter();
+    filter2.type = 'bandpass';
+    filter2.frequency.setValueAtTime(2500, now);
+    filter2.Q.setValueAtTime(0.6, now);
+    const gain2 = this.ctx.createGain();
+    gain2.gain.setValueAtTime(0.40, now);
+    gain2.gain.exponentialRampToValueAtTime(0.001, now + 0.10);
+
+    osc.connect(oscGain);
+    oscGain.connect(this.sfxGain);
+    src1.connect(filter1);
+    filter1.connect(gain1);
+    gain1.connect(this.sfxGain);
+    src2.connect(filter2);
+    filter2.connect(gain2);
+    gain2.connect(this.sfxGain);
+
+    osc.start(now);
+    osc.stop(now + 0.14);
+    src1.start(now);
+    src1.stop(now + 0.15);
+    src2.start(now);
+    src2.stop(now + 0.11);
+  }
+
+  /**
    * Sniper optical scope in/out mechanical click
    */
   public playSniperScope(): void {

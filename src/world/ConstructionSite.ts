@@ -621,13 +621,13 @@ export class ConstructionSite {
     const cable1Geom = new THREE.CylinderGeometry(0.03, 0.03, tieDist1, 6);
     const cable1 = this.addMeshWithEdges(craneGroup, cable1Geom, this.metalMat, InkShaderMaterial.defaultInkColor, false);
     cable1.position.set((craneBaseX + midJibX) * 0.5, (apexTopY + jibY) * 0.5, craneBaseZ);
-    cable1.rotation.z = -Math.atan2(midJibX - craneBaseX, apexTopY - jibY);
+    cable1.rotation.z = Math.atan2(midJibX - craneBaseX, apexTopY - jibY);
 
     const tieDist2 = Math.hypot(jibTipX - craneBaseX, jibY - apexTopY);
     const cable2Geom = new THREE.CylinderGeometry(0.03, 0.03, tieDist2, 6);
     const cable2 = this.addMeshWithEdges(craneGroup, cable2Geom, this.metalMat, InkShaderMaterial.defaultInkColor, false);
     cable2.position.set((craneBaseX + jibTipX) * 0.5, (apexTopY + jibY) * 0.5, craneBaseZ);
-    cable2.rotation.z = -Math.atan2(jibTipX - craneBaseX, apexTopY - jibY);
+    cable2.rotation.z = Math.atan2(jibTipX - craneBaseX, apexTopY - jibY);
 
     // 6. Counter-Jib & Ballast
     const counterLength = 13.0;
@@ -646,7 +646,7 @@ export class ConstructionSite {
     const rearCableGeom = new THREE.CylinderGeometry(0.04, 0.04, rearDist, 6);
     const rearCable = this.addMeshWithEdges(craneGroup, rearCableGeom, this.metalMat, InkShaderMaterial.defaultInkColor, false);
     rearCable.position.set((craneBaseX + rearX) * 0.5, (apexTopY + jibY) * 0.5, craneBaseZ);
-    rearCable.rotation.z = Math.atan2(craneBaseX - rearX, apexTopY - jibY);
+    rearCable.rotation.z = -Math.atan2(craneBaseX - rearX, apexTopY - jibY);
 
     // 7. Trolley on Jib
     const trolleyX = craneBaseX + 17.0;
@@ -704,10 +704,21 @@ export class ConstructionSite {
     hookLoop.position.set(0, hookBlockY - 0.8, 0);
     hookLoop.rotation.z = Math.PI * 0.25;
 
-    // Steel sling cables connecting hook to girder
-    const slingDist = 2.4;
+    // Massive Suspended Steel I-Beam / Girder (Length 9m, orange ink!)
+    const girderLength = 9.0;
+    const girderHeight = 0.7;
+    const girderFlangeW = 0.5;
+    const girderY = hookBlockY - 2.8;
+    const girderTopY = girderY + girderHeight * 0.5;
+
+    // Steel bridle sling cables connecting hook to girder (A-frame bridle hitch)
+    const hookApexY = hookBlockY - 1.15;
+    const spreadX = 2.0;
+    const slingDy = hookApexY - girderTopY;
+    const slingDist = Math.hypot(spreadX, slingDy);
     const slingGeom = new THREE.CylinderGeometry(0.025, 0.025, slingDist, 6);
-    const girderY = hookBlockY - 2.0;
+    const slingAngle = Math.atan2(spreadX, slingDy);
+    const slingMidY = (hookApexY + girderTopY) * 0.5;
 
     const slingL = this.addMeshWithEdges(
       this.craneHookGroup,
@@ -716,8 +727,8 @@ export class ConstructionSite {
       InkShaderMaterial.craneColor,
       false
     );
-    slingL.position.set(-1.8, hookBlockY - 1.0, 0);
-    slingL.rotation.z = 0.9;
+    slingL.position.set(-spreadX * 0.5, slingMidY, 0);
+    slingL.rotation.z = -slingAngle;
 
     const slingR = this.addMeshWithEdges(
       this.craneHookGroup,
@@ -726,13 +737,8 @@ export class ConstructionSite {
       InkShaderMaterial.craneColor,
       false
     );
-    slingR.position.set(1.8, hookBlockY - 1.0, 0);
-    slingR.rotation.z = -0.9;
-
-    // Massive Suspended Steel I-Beam / Girder (Length 9m, orange ink!)
-    const girderLength = 9.0;
-    const girderHeight = 0.7;
-    const girderFlangeW = 0.5;
+    slingR.position.set(spreadX * 0.5, slingMidY, 0);
+    slingR.rotation.z = slingAngle;
 
     // Girder Top Flange
     const gTopGeom = new THREE.BoxGeometry(girderLength, 0.08, girderFlangeW);

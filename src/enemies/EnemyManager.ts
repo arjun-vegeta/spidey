@@ -7,6 +7,7 @@ import { Player } from '../player/Player';
 import { FireResult } from '../weapons/BaseWeapon';
 import { InkParticles } from '../effects/InkParticles';
 import { soundManager } from '../core/SoundManager';
+import type { WorldCollider } from '../world/WorldCollider';
 
 export interface EnemyProjectile {
   id: string;
@@ -51,6 +52,20 @@ export interface SpawnNode {
   waypoints?: THREE.Vector3[];
 }
 
+export interface WaveModifier {
+  name: string;
+  description: string;
+  speed: number;
+  damage: number;
+}
+
+export const WAVE_MODIFIERS: WaveModifier[] = [
+  { name: '', description: 'eliminate all ink hostiles', speed: 1.0, damage: 1.0 },
+  { name: 'CAFFEINATED', description: 'they move fast', speed: 1.30, damage: 0.85 },
+  { name: 'HEAVY INK', description: 'they hit harder', speed: 0.90, damage: 1.35 },
+  { name: 'SWARM', description: 'aggressive & agile', speed: 1.15, damage: 0.90 },
+];
+
 /**
  * Pure segment-vs-player-capsule test (XZ circle + height band).
  * Returns true when the travel segment p0->p1 passes within hitR of the
@@ -79,6 +94,34 @@ export function segmentHitsPlayer(
 }
 
 /**
+ * Calculates the exact distance along segment p0->p1 where it hits the player capsule.
+ * Returns the distance from p0 to the hit, or null if no hit. Exported for tests.
+ */
+export function segmentPlayerHitDistance(
+  p0: THREE.Vector3,
+  p1: THREE.Vector3,
+  hitR: number,
+  playerPos: THREE.Vector3,
+  minY: number,
+  maxY: number
+): number | null {
+  const ex = p1.x - p0.x;
+  const ez = p1.z - p0.z;
+  const fx = p0.x - playerPos.x;
+  const fz = p0.z - playerPos.z;
+  const a = ex * ex + ez * ez;
+  let t = a > 1e-9 ? -(fx * ex + fz * ez) / a : 0;
+  t = t < 0 ? 0 : t > 1 ? 1 : t;
+  const cx = p0.x + ex * t - playerPos.x;
+  const cz = p0.z + ez * t - playerPos.z;
+  if (cx * cx + cz * cz > hitR * hitR) return null;
+  const cy = p0.y + (p1.y - p0.y) * t;
+  if (cy < minY || cy > maxY) return null;
+  const stepLen = Math.hypot(p1.x - p0.x, p1.y - p0.y, p1.z - p0.z);
+  return t * stepLen;
+}
+
+/**
  * Manages wave spawning, active enemies, enemy projectiles,
  * bullet hit detection, score/combo calculation, and wave progression.
  */
@@ -86,9 +129,14 @@ export class EnemyManager {
   public scene: THREE.Scene;
   public particles: InkParticles;
   public collidableMeshes: THREE.Mesh[] = [];
+  public worldCollider: WorldCollider | null = null;
+  private wallScratch: { x: number; z: number; nx: number; nz: number; pushed: boolean } = {
+    x: 0, z: 0, nx: 0, nz: 0, pushed: false,
+  };
 
   // Active enemies & projectiles
   public enemies: Enemy[] = [];
+  public corpses: Enemy[] = [];
   public projectiles: EnemyProjectile[] = [];
   private projectileGroup: THREE.Group = new THREE.Group();
 
@@ -99,6 +147,11 @@ export class EnemyManager {
   public waveInProgress: boolean = false;
   public intermissionTimer: number = 0;
   public readonly intermissionDuration: number = 3.5;
+
+  // Wave speed and damage modifiers (inspired by inspiration's enemies.mods)
+  public mods: { speed: number; damage: number } = { speed: 1.0, damage: 1.0 };
+  public activeModifier: WaveModifier = WAVE_MODIFIERS[0];
+  private static slotCounter: number = 0;
 
   // Combo & scoring state
   public totalScore: number = 0;
@@ -130,7 +183,16 @@ export class EnemyManager {
   private projectileRaycaster: THREE.Raycaster = new THREE.Raycaster();
   private tmpPrev: THREE.Vector3 = new THREE.Vector3();
   private tmpStep: THREE.Vector3 = new THREE.Vector3();
+  private tmpStepNorm: THREE.Vector3 = new THREE.Vector3();
+  private tmpMeshPos: THREE.Vector3 = new THREE.Vector3();
   private nearMeshes: THREE.Mesh[] = [];
+
+  public bindCollider(c: WorldCollider | null): void {
+    this.worldCollider = c;
+    this.particles.bindCollider(c);
+    for (const e of this.enemies) e.bindCollider(c);
+    for (const e of this.corpses) e.bindCollider(c);
+  }
 
   constructor(scene: THREE.Scene, particles: InkParticles, collidableMeshes: THREE.Mesh[] = []) {
     this.scene = scene;
@@ -408,12 +470,27 @@ export class EnemyManager {
 
   /**
    * Starts wave progression or advances to next wave.
+   * Modifiers and progressive speed scaling applied from inspiration.
    * Mercy rule: low-HP players (below 30) face one fewer thug (min 1).
    */
   public startNextWave(playerHP?: number): void {
     this.currentWave++;
     this.waveInProgress = true;
     this.intermissionTimer = 0;
+
+    // Wave speed and damage scaling (inspired by inspiration's enemies.mods)
+    const waveSpeedScale = 1.0 + Math.min(0.35, (this.currentWave - 1) * 0.07);
+    if (this.currentWave === 1) {
+      this.activeModifier = WAVE_MODIFIERS[0];
+      this.mods.speed = 1.0;
+      this.mods.damage = 1.0;
+    } else {
+      const allowed = this.currentWave < 3 ? 2 : WAVE_MODIFIERS.length;
+      const mod = WAVE_MODIFIERS[Math.floor(Math.random() * allowed)];
+      this.activeModifier = mod;
+      this.mods.speed = mod.speed * waveSpeedScale;
+      this.mods.damage = mod.damage;
+    }
 
     const comp = this.compositionFor(this.currentWave);
     let thugsToSpawn = comp.thugs;
@@ -436,7 +513,7 @@ export class EnemyManager {
 
   /**
    * Spawns requested counts of each enemy type at valid nodes.
-   * Staggered 0.5s trickle with a 12-alive cap: reinforcements, not a mob.
+   * Staggered trickle with a 12-alive cap: reinforcements, not a mob.
    */
   private spawnQueue: Array<() => void> = [];
   private spawnTick: number = 0;
@@ -503,22 +580,50 @@ export class EnemyManager {
   private pumpSpawnQueue(dt: number): void {
     if (this.spawnQueue.length === 0) return;
     this.spawnTick -= dt;
+    const waveDelay = Math.max(0.3, 0.5 - (this.currentWave - 1) * 0.04);
     while (this.spawnQueue.length > 0 && this.spawnTick <= 0) {
       if (this.enemies.length >= this.maxAlive) {
-        this.spawnTick = 0.5;
+        this.spawnTick = waveDelay;
         return;
       }
       const fn = this.spawnQueue.shift()!;
       fn();
-      this.spawnTick += 0.5;
+      this.spawnTick += waveDelay;
     }
   }
 
   private addEnemy(enemy: Enemy): void {
+    enemy.slotAngle = (EnemyManager.slotCounter++) * 2.39996;
+    enemy.speedMultiplier = this.mods.speed;
+    enemy.damageMultiplier = this.mods.damage;
+    enemy.bindCollider(this.worldCollider);
+    this.snapSpawnToWorld(enemy);
     this.enemies.push(enemy);
     this.scene.add(enemy.group);
     this.particles.spawnSketchIn(enemy.group.position);
     soundManager.playSpawnIn();
+  }
+
+  private snapSpawnToWorld(enemy: Enemy): void {
+    if (!this.worldCollider) return;
+    const p = enemy.group.position;
+    if (enemy.type === 'drone') {
+      this.worldCollider.pushOut(p.x, p.z, 1.4, p.y - 1.0, p.y + 1.0, this.wallScratch);
+      if (this.wallScratch.pushed) {
+        p.x = this.wallScratch.x;
+        p.z = this.wallScratch.z;
+      }
+      const ground = this.worldCollider.groundAt(p.x, p.y, p.z, 50);
+      if (ground !== null && p.y < ground + 1.5) p.y = ground + 1.5;
+      return;
+    }
+    this.worldCollider.pushOut(p.x, p.z, 0.55, p.y, p.y + 1.8, this.wallScratch);
+    if (this.wallScratch.pushed) {
+      p.x = this.wallScratch.x;
+      p.z = this.wallScratch.z;
+    }
+    const ground = this.worldCollider.groundAt(p.x, p.y + 0.5, p.z, 3.0);
+    if (ground !== null) p.y = ground;
   }
 
   /**
@@ -588,14 +693,15 @@ export class EnemyManager {
     const hitDir = fireResult.ray.direction;
     const damageResult = targetEnemy.takeDamage(fireResult.damage, finalHeadshot, hitPoint, hitDir);
 
-    // Spawn red ink impact splatter
-    this.particles.spawnEnemyHit(hitPoint, finalHeadshot);
+    // Spawn directional red ink blood splatter
+    const bloodAmt = Math.max(0.6, Math.min(2.5, fireResult.damage / 45.0)) * (finalHeadshot ? 1.6 : 1.0);
+    this.particles.spawnBlood(hitPoint, hitDir, bloodAmt, finalHeadshot);
 
     let killEvent: KillEvent | undefined;
 
     if (damageResult.killed) {
-      // Enemy disintegrates into ink drops and paper scraps
-      targetEnemy.disintegrate(this.particles);
+      // Enemy disintegrates into ink drops, paper scraps, directional blood burst, blood pool, and fountain
+      targetEnemy.disintegrate(this.particles, hitDir, finalHeadshot);
 
       // Kill streak tracking
       this.totalKills++;
@@ -740,24 +846,46 @@ export class EnemyManager {
 
     // 3. Update all living enemies
     const playerPos = player.position;
+    const playerSpeed = player.velocity ? player.velocity.length() : 0;
     for (let i = this.enemies.length - 1; i >= 0; i--) {
       const enemy = this.enemies[i];
 
-      if (enemy.isDead && !enemy.isDying) {
-        // Remove dead enemy from scene after disintegration
-        this.scene.remove(enemy.group);
-        enemy.dispose();
+      if (enemy.isDead) {
         this.enemies.splice(i, 1);
+        if (enemy.isDying) {
+          this.corpses.push(enemy);
+        } else {
+          this.scene.remove(enemy.group);
+          enemy.dispose();
+        }
         continue;
       }
 
       enemy.waveNumber = this.currentWave;
-      enemy.update(dt, playerPos, camera, this.collidableMeshes);
+      enemy.speedMultiplier = this.mods.speed;
+      enemy.damageMultiplier = this.mods.damage;
+      if (enemy.worldCollider !== this.worldCollider) enemy.bindCollider(this.worldCollider);
+      if (this.waveInProgress && !enemy.alerted && !enemy.isDead) {
+        enemy.alert(playerPos);
+      }
+      enemy.update(dt, playerPos, camera, this.collidableMeshes, playerSpeed);
 
       // Collect pending projectiles from this enemy
       while (enemy.pendingProjectiles.length > 0) {
         const req = enemy.pendingProjectiles.shift()!;
         this.spawnProjectile(req);
+      }
+    }
+
+    // 3b. Update active corpses falling and resting on ground (x seconds before disappearing)
+    for (let i = this.corpses.length - 1; i >= 0; i--) {
+      const corpse = this.corpses[i];
+      if (corpse.worldCollider !== this.worldCollider) corpse.bindCollider(this.worldCollider);
+      corpse.update(dt, playerPos, camera, this.collidableMeshes, playerSpeed);
+      if (!corpse.isDying) {
+        this.scene.remove(corpse.group);
+        corpse.dispose();
+        this.corpses.splice(i, 1);
       }
     }
 
@@ -771,7 +899,6 @@ export class EnemyManager {
 
   private separateEnemies(): void {
     const list = this.enemies;
-    const minD = 1.4;
     for (let i = 0; i < list.length; i++) {
       const a = list[i];
       if (a.isDead) continue;
@@ -781,9 +908,14 @@ export class EnemyManager {
         const b = list[j];
         if (b.isDead) continue;
         const pb = b.group.position;
-        if (Math.abs(pa.y - pb.y) > 2.0) continue;
+        // Drones live in a different air band: wider Y gate + wider ring.
+        const yGate = a.type === 'drone' || b.type === 'drone' ? 3.0 : 2.0;
+        if (Math.abs(pa.y - pb.y) > yGate) continue;
+        const minD = a.type === 'drone' || b.type === 'drone' ? 3.2 : 1.4;
         let dx = pb.x - pa.x;
         let dz = pb.z - pa.z;
+        // Thugs trail instead of stacking: follower hangs back along its heading.
+        // (Heading bias applied by callers via position; here keep pure radial push.)
         const d2 = dx * dx + dz * dz;
         if (d2 >= minD * minD) continue;
         if (d2 > 1e-6) {
@@ -792,6 +924,8 @@ export class EnemyManager {
           dx *= push;
           dz *= push;
         } else {
+          // Deterministic declump: split along the line to the player side
+          // is handled by movement; here just separate on +X deterministically.
           dx = minD;
           dz = 0;
         }
@@ -807,6 +941,18 @@ export class EnemyManager {
         } else if (!aAnchored && bAnchored) {
           pa.x -= dx;
           pa.z -= dz;
+        }
+      }
+    }
+    // Separation must never shove anyone inside a wall: re-resolve shells.
+    if (this.worldCollider) {
+      for (const e of list) {
+        if (e.isDead || e.type === 'drone') continue;
+        const p = e.group.position;
+        this.worldCollider.pushOut(p.x, p.z, 0.55, p.y, p.y + 1.8, this.wallScratch);
+        if (this.wallScratch.pushed) {
+          p.x = this.wallScratch.x;
+          p.z = this.wallScratch.z;
         }
       }
     }
@@ -844,61 +990,81 @@ export class EnemyManager {
         continue;
       }
 
-      // Check collision and near-miss against Player (skip while dead)
-      if (!player.isDead) {
-        // Segment-vs-capsule: test the whole travel segment, not just the
-        // endpoint — at swing speed + bullet speed the point test tunnels
-        // straight through the body between frames.
-        if (segmentHitsPlayer(
-          this.tmpPrev, proj.position, proj.radius + playerRadius,
-          playerPos, playerMinY, playerMaxY
-        )) {
-          const wasAlive = !player.isDead;
-          player.takeDamage(proj.damage, proj.position);
-          if (this.onPlayerDamaged) this.onPlayerDamaged(proj.position);
-          this.particles.spawnEnemyHit(proj.position, false);
-          if (wasAlive && player.isDead) {
-            this.lastPlayerDeath = this.describeKiller(proj, player, camera);
-          }
-          this.removeProjectile(i);
-          continue;
-        }
+      // 1. Check collision against architecture first (WorldCollider primary, collidableMeshes fallback)
+      let wallHitDist = Infinity;
+      let wallHitPoint: THREE.Vector3 | null = null;
+      let wallHitNormal: THREE.Vector3 | null = null;
 
-        // Near-miss whiz when an enemy projectile passes <2m without hitting
+      if (stepLength > 0.001) {
+        this.tmpStepNorm.copy(this.tmpStep).multiplyScalar(1.0 / stepLength);
+
+        if (this.worldCollider) {
+          const hit = this.worldCollider.raycast(this.tmpPrev, this.tmpStepNorm, stepLength);
+          if (hit) {
+            wallHitDist = hit.dist;
+            wallHitPoint = hit.point;
+            wallHitNormal = hit.normal;
+          }
+        } else if (this.collidableMeshes.length > 0) {
+          this.projectileRaycaster.set(this.tmpPrev, this.tmpStepNorm);
+          this.projectileRaycaster.far = stepLength;
+
+          this.nearMeshes.length = 0;
+          for (let m = 0; m < this.collidableMeshes.length; m++) {
+            const mesh = this.collidableMeshes[m];
+            mesh.getWorldPosition(this.tmpMeshPos);
+            const mx = this.tmpMeshPos.x - proj.position.x;
+            const mz = this.tmpMeshPos.z - proj.position.z;
+            if (mx * mx + mz * mz > 900) continue;
+            if (Math.abs(this.tmpMeshPos.y - proj.position.y) > 60) continue;
+            this.nearMeshes.push(mesh);
+          }
+          if (this.nearMeshes.length > 0) {
+            const hits = this.projectileRaycaster.intersectObjects(this.nearMeshes, false);
+            if (hits.length > 0) {
+              const hit = hits[0];
+              wallHitDist = hit.distance;
+              wallHitPoint = hit.point;
+              wallHitNormal = hit.face ? hit.face.normal.clone().transformDirection(hit.object.matrixWorld) : EnemyManager.UP;
+            }
+          }
+        }
+      }
+
+      // 2. Check segment against player (if alive)
+      const hitDist = !player.isDead
+        ? segmentPlayerHitDistance(
+            this.tmpPrev, proj.position, proj.radius + playerRadius,
+            playerPos, playerMinY, playerMaxY
+          )
+        : null;
+
+      // 3. Resolve: if player was hit before the wall along the segment, damage player;
+      // otherwise, if a wall was hit, the wall stops the bullet completely.
+      if (hitDist !== null && hitDist < wallHitDist) {
+        const wasAlive = !player.isDead;
+        player.takeDamage(proj.damage, proj.position);
+        if (this.onPlayerDamaged) this.onPlayerDamaged(proj.position);
+        if (wasAlive && player.isDead) {
+          this.lastPlayerDeath = this.describeKiller(proj, player, camera);
+        }
+        this.removeProjectile(i);
+        continue;
+      } else if (wallHitPoint && wallHitNormal) {
+        this.particles.spawnWallImpact(wallHitPoint, wallHitNormal);
+        soundManager.playImpactWall();
+        this.removeProjectile(i);
+        continue;
+      }
+
+      // 4. Near-miss whiz when an enemy projectile passes <2m without hitting
+      if (!player.isDead) {
         const dx = proj.position.x - playerPos.x;
         const dz = proj.position.z - playerPos.z;
         const horizDist = Math.hypot(dx, dz);
         if (!proj.nearMissTriggered && horizDist < 2.0 && proj.position.y >= (playerMinY - 0.8) && proj.position.y <= (playerMaxY + 0.8)) {
           proj.nearMissTriggered = true;
           soundManager.playNearMissWhiz();
-        }
-      }
-
-      // Check collision against architecture (broadphase: only nearby meshes)
-      if (this.collidableMeshes.length > 0 && stepLength > 0.001) {
-        this.tmpStep.normalize();
-        this.projectileRaycaster.set(this.tmpPrev, this.tmpStep);
-        this.projectileRaycaster.far = stepLength;
-
-        this.nearMeshes.length = 0;
-        for (let m = 0; m < this.collidableMeshes.length; m++) {
-          const mesh = this.collidableMeshes[m];
-          const mx = mesh.position.x - proj.position.x;
-          const mz = mesh.position.z - proj.position.z;
-          if (mx * mx + mz * mz > 900) continue;
-          if (Math.abs(mesh.position.y - proj.position.y) > 60) continue;
-          this.nearMeshes.push(mesh);
-        }
-        if (this.nearMeshes.length === 0) continue;
-
-        const hits = this.projectileRaycaster.intersectObjects(this.nearMeshes, false);
-        if (hits.length > 0) {
-          const hit = hits[0];
-          const normal = hit.face ? hit.face.normal.clone().transformDirection(hit.object.matrixWorld) : new THREE.Vector3(0, 1, 0);
-          this.particles.spawnWallImpact(hit.point, normal);
-          soundManager.playImpactWall();
-          this.removeProjectile(i);
-          continue;
         }
       }
     }
@@ -948,6 +1114,12 @@ export class EnemyManager {
     }
     this.enemies = [];
 
+    for (const corpse of this.corpses) {
+      this.scene.remove(corpse.group);
+      corpse.dispose();
+    }
+    this.corpses = [];
+
     for (const proj of this.projectiles) {
       this.projectileGroup.remove(proj.mesh);
     }
@@ -964,6 +1136,8 @@ export class EnemyManager {
     this.totalKills = 0;
     this.killStreak = 0;
     this.lastPlayerDeath = null;
+    this.mods = { speed: 1.0, damage: 1.0 };
+    this.activeModifier = WAVE_MODIFIERS[0];
   }
 
   public dispose(): void {
