@@ -397,6 +397,103 @@ describe('North Two-Story Grand Central Atrium & Observatorium (x: 0, z: -50) - 
     // Raised central glass lantern skylight has standable glass top
     expect(coll.groundAt(0.0, 10.9, -47.5)).toBeCloseTo(10.9, 1);
   });
+
+  it('simulates walking from ground level up the grand stairs to the 2nd floor smoothly without jumping', () => {
+    let px = 0;
+    let pz = -46.0;
+    let feetY = 0.6;
+    const r = 0.35;
+    const out = { x: 0, z: 0, nx: 0, nz: 0, pushed: false };
+
+    let blockedSteps: Array<{ pz: number, feetY: number, pushedZ: number, nz: number }> = [];
+
+    for (let step = 0; step < 300; step++) {
+      pz -= 0.05;
+      const top = coll.groundAt(px, feetY, pz, 0.55);
+      if (top !== null) {
+        feetY = top;
+      }
+      coll.pushOut(px, pz, r, feetY, feetY + 1.8, out);
+      if (out.pushed) {
+        blockedSteps.push({ pz, feetY, pushedZ: out.z, nz: out.nz });
+        pz = out.z;
+        px = out.x;
+      }
+      if (pz <= -58.0) {
+        break;
+      }
+    }
+
+    expect(blockedSteps.length).toBe(0);
+    expect(pz).toBeLessThanOrEqual(-58.0);
+    expect(feetY).toBeCloseTo(5.2, 1);
+  });
+
+  it('allows unobstructed turning left and right from the 2nd floor stair landing', () => {
+    const out = { x: 0, z: 0, nx: 0, nz: 0, pushed: false };
+
+    // At z = -56.5 (landing), turn left towards West Gallery
+    for (let x = 0; x >= -4.5; x -= 0.2) {
+      coll.pushOut(x, -56.5, 0.35, 5.2, 7.0, out);
+      expect(out.pushed).toBe(false);
+      expect(coll.groundAt(x, 5.2, -56.5)).toBeCloseTo(5.2, 1);
+    }
+
+    // At z = -56.5 (landing), turn right towards East Gallery
+    for (let x = 0; x <= 4.5; x += 0.2) {
+      coll.pushOut(x, -56.5, 0.35, 5.2, 7.0, out);
+      expect(out.pushed).toBe(false);
+      expect(coll.groundAt(x, 5.2, -56.5)).toBeCloseTo(5.2, 1);
+    }
+  });
+
+  it('simulates walking up the NE roof staircase from 2nd floor to rooftop cupola without jumping', () => {
+    let px = 10.0;
+    let pz = -51.0;
+    let feetY = 5.2;
+    const r = 0.35;
+    const out = { x: 0, z: 0, nx: 0, nz: 0, pushed: false };
+
+    let blockedSteps: Array<{ pz: number, feetY: number, pushedZ: number, nz: number }> = [];
+
+    for (let step = 0; step < 200; step++) {
+      pz -= 0.05;
+      const top = coll.groundAt(px, feetY, pz, 0.55);
+      if (top !== null) {
+        feetY = top;
+      }
+      coll.pushOut(px, pz, r, feetY, feetY + 1.8, out);
+      if (out.pushed) {
+        blockedSteps.push({ pz, feetY, pushedZ: out.z, nz: out.nz });
+        pz = out.z;
+        px = out.x;
+      }
+      if (pz <= -57.6) {
+        break;
+      }
+    }
+
+    expect(blockedSteps.length).toBe(0);
+    expect(pz).toBeLessThanOrEqual(-57.6);
+    expect(feetY).toBeCloseTo(9.8, 1);
+
+    // From top of stair (x = 10.0, z = -57.6, y = 9.8), walk through cupola door at x = 8.0, z = -57.0 onto roof
+    for (let x = 10.0; x >= 6.0; x -= 0.2) {
+      coll.pushOut(x, -57.2, 0.35, 9.8, 11.6, out);
+      expect(out.pushed).toBe(false);
+    }
+    // Now standing outside cupola on rooftop deck
+    expect(coll.groundAt(6.0, 9.8, -57.2)).toBeCloseTo(9.8, 1);
+  });
+
+  it('ground floor solid back wall prevents walking into the underside of the stairs', () => {
+    const out = { x: 0, z: 0, nx: 0, nz: 0, pushed: false };
+    // Walking south from z = -56.5 towards the stairs at x = 0 on ground floor (y = 0.6)
+    coll.pushOut(0.0, -56.1, 0.35, 0.6, 2.4, out);
+    expect(out.pushed).toBe(true);
+    expect(out.nz).toBeLessThan(0); // Pushed north away from back wall
+  });
 });
+
 
 

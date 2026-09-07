@@ -1065,28 +1065,6 @@ export class CityBuilder {
         tag: 'floor'
       });
 
-      // 3. Step vertical riser wall collider (prevents walking forward into step face)
-      this.twoStoryColliders.push({
-        minX: stair1X1,
-        minY: stepBaseY,
-        minZ: stepZStart - 0.05,
-        maxX: stair1X2,
-        maxY: stepTopY,
-        maxZ: stepZStart + 0.05,
-        tag: 'wall'
-      });
-
-      // 4. Solid foundation wedge under stairs (prevents walking underneath the flight)
-      this.twoStoryColliders.push({
-        minX: stair1X1,
-        minY: groundY,
-        minZ: stepZEnd,
-        maxX: stair1X2,
-        maxY: stepTopY - 0.1,
-        maxZ: stepZStart,
-        tag: 'wall'
-      });
-
       // Balustrade posts on left (x = -2.5) and right (x = 2.5) every 3 steps
       if (i % 3 === 0 || i === stair1Steps - 1) {
         for (const sideX of [stair1X1, stair1X2]) {
@@ -1097,9 +1075,12 @@ export class CityBuilder {
       }
     }
 
+    // Solid back wall under the stairs enclosing the ground-floor under-stair volume
+    addBoxPiece(stair1X1, groundY, -56.15, stair1X2, 4.8, -56.0, depotInteriorWallMat, 'wall');
+
     // Solid side balustrade walls along left and right of Grand Staircase (prevents falling off side)
-    addBoxPiece(stair1X1 - 0.1, groundY, -56.0, stair1X1 + 0.05, secondFloorY + 1.1, -48.0, this.metalMat, 'wall');
-    addBoxPiece(stair1X2 - 0.05, groundY, -56.0, stair1X2 + 0.1, secondFloorY + 1.1, -48.0, this.metalMat, 'wall');
+    addBoxPiece(stair1X1 - 0.1, groundY, -55.6, stair1X1 + 0.05, secondFloorY + 1.1, -48.0, this.metalMat, 'wall');
+    addBoxPiece(stair1X2 - 0.05, groundY, -55.6, stair1X2 + 0.1, secondFloorY + 1.1, -48.0, this.metalMat, 'wall');
 
     // Continuous handrail tubes on both sides
     for (const sideX of [stair1X1, stair1X2]) {
@@ -1194,31 +1175,13 @@ export class CityBuilder {
         tag: 'floor'
       });
 
-      // 3. Step vertical riser wall collider
-      this.twoStoryColliders.push({
-        minX: stair2X1,
-        minY: stepBaseY,
-        minZ: stepZStart - 0.05,
-        maxX: stair2X2,
-        maxY: stepTopY,
-        maxZ: stepZStart + 0.05,
-        tag: 'wall'
-      });
-
-      // 4. Solid foundation wedge under stairs
-      this.twoStoryColliders.push({
-        minX: stair2X1,
-        minY: secondFloorY,
-        minZ: stepZEnd,
-        maxX: stair2X2,
-        maxY: stepTopY - 0.1,
-        maxZ: stepZStart,
-        tag: 'wall'
-      });
     }
 
-    // Inner balustrade wall along inner side (x = 8.5) of NE Staircase
-    addBoxPiece(8.4, secondFloorY, -57.6, 8.55, roofY + 1.1, -52.0, this.metalMat, 'wall');
+    // Solid back wall under the NE roof stairs (from 2nd floor up to roof slab underside at 9.4m)
+    addBoxPiece(stair2X1, secondFloorY, -57.75, stair2X2, 9.4, -57.6, depotInteriorWallMat, 'wall');
+
+    // Inner balustrade wall along inner side (x = 8.5) of NE Staircase along 2nd floor gallery
+    addBoxPiece(8.4, secondFloorY, -56.0, 8.55, secondFloorY + 1.1, -52.0, this.metalMat, 'wall');
 
     // --- 10. Solid Rooftop Slab & Perimeter Parapets (Roof level at y = 9.8) ---
     // Skylight opening: x: -4.5..4.5, z: -51.0..-44.0
@@ -1273,19 +1236,19 @@ export class CityBuilder {
       tag: 'floor'
     });
 
-    // --- 12. NE Rooftop Lantern Cupola (x: 8.0..12.0, z: -59.5..-55.0, y: 9.8..12.8) ---
+    // --- 12. NE Rooftop Lantern Cupola (x: 8.0..12.0, z: -59.5..-51.8, y: 9.8..12.8) ---
     // Cupola enclosure walls (West wall has open door facing roof: z: -58.5..-56.0, h: 2.2)
     addBoxPiece(7.8, roofY, -59.5, 8.2, 12.8, -58.5, depotTrimMat, 'wall'); // West door rear
     addBoxPiece(7.8, roofY + 2.2, -58.5, 8.2, 12.8, -56.0, depotTrimMat, 'wall'); // West door lintel
-    addBoxPiece(7.8, roofY, -56.0, 8.2, 12.8, -55.0, depotTrimMat, 'wall'); // West door front
-    addBoxPiece(8.0, roofY, -55.2, 12.0, 12.8, -54.8, depotTrimMat, 'wall'); // South wall
+    addBoxPiece(7.8, roofY, -56.0, 8.2, 12.8, -51.8, depotTrimMat, 'wall'); // West wall south of door
+    addBoxPiece(8.0, 12.0, -52.0, 12.0, 12.8, -51.6, depotTrimMat, 'wall'); // South high lintel arch
     addBoxPiece(8.0, roofY, -59.7, 12.0, 12.8, -59.3, depotTrimMat, 'wall'); // North wall
     // Cupola domed roof
     const cupolaDomeGeom = new THREE.ConeGeometry(2.6, 1.4, 8);
     const cupolaDome = this.addMeshWithEdges(depotGroup, cupolaDomeGeom, this.roofMat, darkInkColor, true);
-    cupolaDome.position.set(10.0, 13.5, -57.25);
+    cupolaDome.position.set(10.0, 13.5, -55.75);
     // Standable cupola roof slab
-    addBoxPiece(7.8, 12.6, -59.7, 12.2, 12.8, -54.8, this.roofMat, 'floor');
+    addBoxPiece(7.8, 12.6, -59.7, 12.2, 12.8, -51.8, this.roofMat, 'floor');
 
     // --- 13. SW Industrial Water Tower (x = -8.0, z = -44.0) ---
     const tankR = 1.9;
