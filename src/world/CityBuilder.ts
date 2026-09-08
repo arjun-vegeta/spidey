@@ -3,10 +3,44 @@ import { InkShaderMaterial } from '../shaders/InkShaderMaterial';
 import { ConstructionSite } from './ConstructionSite';
 import { WebAnchor } from '../player/SwingPhysics';
 import { WorldCollider } from './WorldCollider';
+import type { ColliderTag } from './WorldCollider';
 import { COVER_RAIL_HEIGHT } from '../core/CoverMetrics';
 import { LANDABLE_TRIM } from './LandableTrim';
 
 export { LANDABLE_TRIM } from './LandableTrim';
+
+/**
+ * DISTRICT GRID — the city is a 3x3 of parcels:
+ *
+ *     1   2   3        z = -50   (2 = the two-storey depot you can walk into)
+ *     4   C   5        z =   0   (C = construction site)
+ *     6   7   8        z = +50
+ *   x=-54  0  +54
+ *
+ * The x pitch is 54 and the z pitch 50 because two things are load-bearing and
+ * must not move: the depot sits at (0, -50) and the skybridge dock at (-54, 0),
+ * whose east face at x = -41 is exactly where the site's skybridge lands. Every
+ * other building is placed on the grid around them.
+ *
+ * Each parcel is a raised sidewalk PARCEL_W x PARCEL_D with an 18m road between,
+ * and every building footprint is checked against its parcel by tests/city.test.ts
+ * so nothing ends up standing in the road again.
+ */
+/** The single flat street walk plane, matching the street floor shell. */
+export const STREET_Y = 0.5;
+export const CELL_X = 54.0;
+export const CELL_Z = 50.0;
+export const PARCEL_W = 36.0;
+export const PARCEL_D = 32.0;
+export const ROAD_W = CELL_X - PARCEL_W; // 18
+export const ROAD_D = CELL_Z - PARCEL_D; // 18
+/** Sidewalk margin a footprint must leave inside its parcel on every side. */
+export const CURB_MARGIN = 2.5;
+
+/** Grid cell -> world centre. Column/row are -1, 0 or +1. */
+export function cellCenter(col: -1 | 0 | 1, row: -1 | 0 | 1): { x: number; z: number } {
+  return { x: col * CELL_X, z: row * CELL_Z };
+}
 
 export interface SkyscraperConfig {
   x: number;
@@ -30,6 +64,30 @@ export interface SkyscraperConfig {
   mansard?: boolean; // stepped verdigris mansard cap + dormers (copper annex)
   marquee?: boolean; // theater front: canopy, bulb row, blade sign
   flyTower?: boolean; // theater stage-house tower (tall rear block)
+  /**
+   * Open pillared ground floor (pilotis / parking deck). The bulk starts at
+   * `pilotisHeight` and only the columns are solid below it, so players AND
+   * enemies walk clean through the ground floor. Exactly one building in the
+   * district gets this - every other one is a closed volume you traverse from
+   * the outside via balconies, ledges and terraces.
+   */
+  pilotis?: boolean;
+  pilotisHeight?: number; // deck underside (default 5.0)
+  /**
+   * NYC zigzag fire escape: railed landings every 4m joined by walkable stair
+   * ramps, on the named faces. The most useful traversal furniture in the
+   * district - ride it up a facade on foot, or fight from the landings, which
+   * are half-height-railed like any other balcony.
+   */
+  fireEscape?: Array<'north' | 'south' | 'east' | 'west'>;
+  /** Projecting bracketed cornice near the parapet: a thin standable ledge. */
+  cornice?: boolean;
+  /** Brownstone stoop at the site-facing entrance (steps + railed landing). */
+  stoop?: boolean;
+  /** Tall arched cast-iron shopfront bays along the site-facing face (SoHo). */
+  arcadeBays?: boolean;
+  /** Warehouse loading dock: canopy on rods over a raised platform. */
+  loadingDock?: boolean;
   ink?: number; // per-building facade pen-ink tint (notebook doodle palette)
   trimInk?: number; // per-building darker trim ink
 }
@@ -75,6 +133,19 @@ export class CityBuilder {
   private stackSpecs: Array<{ cx: number; cz: number; baseY: number; topY: number; r: number }> = [];
   private towerSpecs: Array<{ cx: number; cz: number; hw: number; hd: number; h: number }> = [];
   private streetPropSpecs: Array<{ x: number; z: number; r: number; h: number }> = [];
+  /** Hydrant bonnet latch points, exposed so tests can assert winchability. */
+  private hydrantAnchors: THREE.Vector3[] = [];
+  /** Fire-escape landing centres, exposed so tests can walk them. */
+  private fireEscapeLandings: Array<{
+    cx: number; cy: number; cz: number;
+    face: string; nx: number; nz: number;
+    bx: number; bz: number; // the building this run climbs
+  }> = [];
+  // Facade-furniture shells (cornice ledges, stoops, loading docks, pilotis
+  // columns) and fire-escape stair ramps. Mesh builders run before the collider
+  // exists, so they queue shells here and buildCollisionShells replays them.
+  private extraBoxSpecs: Array<{ minX: number; minY: number; minZ: number; maxX: number; maxY: number; maxZ: number; tag: ColliderTag }> = [];
+  private extraRampSpecs: Array<{ minX: number; minZ: number; maxX: number; maxZ: number; axis: 'x' | 'z'; y0: number; y1: number; thickness: number }> = [];
   private twoStoryColliders: Array<{ minX: number; minY: number; minZ: number; maxX: number; maxY: number; maxZ: number; tag: 'wall' | 'floor' }> = [];
   private lampGlowMat: THREE.MeshBasicMaterial | null = null;
 
@@ -168,6 +239,27 @@ export class CityBuilder {
     return mesh;
   }
 
+  /** Queues a collision shell box for buildCollisionShells to register. */
+  private addShellBox(
+    minX: number, minY: number, minZ: number,
+    maxX: number, maxY: number, maxZ: number,
+    tag: ColliderTag
+  ): void {
+    this.extraBoxSpecs.push({
+      minX: Math.min(minX, maxX), minY: Math.min(minY, maxY), minZ: Math.min(minZ, maxZ),
+      maxX: Math.max(minX, maxX), maxY: Math.max(minY, maxY), maxZ: Math.max(minZ, maxZ),
+      tag,
+    });
+  }
+
+  /** Queues a walkable sloped shell (fire-escape flights) for registration. */
+  private addShellRamp(
+    minX: number, minZ: number, maxX: number, maxZ: number,
+    axis: 'x' | 'z', y0: number, y1: number, thickness: number = 0.3
+  ): void {
+    this.extraRampSpecs.push({ minX, minZ, maxX, maxZ, axis, y0, y1, thickness });
+  }
+
   /**
    * Builds ground tarmac plane, raised sidewalks, and perimeter boundary barriers
    */
@@ -178,68 +270,92 @@ export class CityBuilder {
     const citySize = 520.0;
     const halfCity = citySize * 0.5;
 
-    // Ground tarmac slab
+    // Ground tarmac slab. Its top is STREET_Y, matching the single flat walk plane
+    // the collision shells register, so you never float above the road surface.
     const groundGeom = new THREE.BoxGeometry(citySize, 1.0, citySize);
     const ground = this.addMeshWithEdges(streetsGroup, groundGeom, this.groundMat, InkShaderMaterial.defaultInkColor, true);
-    ground.position.set(0, -0.5, 0);
+    ground.position.set(0, STREET_Y - 0.5, 0);
 
-    // Raised sidewalks around city blocks
-    const sidewalkBlocks: Array<[number, number, number, number]> = [
-      // [x, z, width, depth]
-      // Central construction block plaza
-      [-10, 0, 75, 65],
-      // East block 1
-      [60, 0, 42, 45],
-      // East block 2 (North)
-      [60, 70, 42, 60],
-      // East block 3 (South)
-      [60, -70, 42, 60],
-      // North block 1
-      [0, 65, 40, 45],
-      // North block 2 (West)
-      [-55, 65, 42, 45],
-      // South block 1
-      [0, -50, 32, 28],
-      // South block 2 (West)
-      [-55, -65, 42, 45],
-      // West block 1
-      [-110, 0, 45, 45],
-      // West block 2 (North)
-      [-110, 70, 45, 60],
-      // West block 3 (South)
-      [-110, -70, 45, 60]
-    ];
+    // Raised sidewalk parcels on the district grid. The playable 3x3 is the inner
+    // ring; the surrounding parcels are plain paving so the roads read as a city
+    // grid running off to the skyline instead of dead-ending at the last building.
+    // Paving is a flush inlay, not a raised kerb: the walk plane is one flat
+    // height everywhere, so a stepped kerb would be a lip you cannot actually
+    // step on. Sidewalk vs road reads from the ink tone and the kerb line.
+    const paveT = 0.04;
+    const swGeom = new THREE.BoxGeometry(PARCEL_W, paveT, PARCEL_D);
+    const kerbNS = new THREE.BoxGeometry(PARCEL_W + 0.5, paveT + 0.01, 0.25);
+    const kerbEW = new THREE.BoxGeometry(0.25, paveT + 0.01, PARCEL_D);
+    for (let col = -2; col <= 2; col++) {
+      for (let row = -2; row <= 2; row++) {
+        const px = col * CELL_X;
+        const pz = row * CELL_Z;
+        const sw = this.addMeshWithEdges(streetsGroup, swGeom, this.sidewalkMat, InkShaderMaterial.defaultInkColor, false);
+        sw.position.set(px, STREET_Y + paveT * 0.5, pz);
 
-    const curbHeight = 0.2;
-    for (const [bx, bz, bw, bd] of sidewalkBlocks) {
-      const swGeom = new THREE.BoxGeometry(bw, curbHeight, bd);
-      const sw = this.addMeshWithEdges(streetsGroup, swGeom, this.sidewalkMat, InkShaderMaterial.defaultInkColor, true);
-      sw.position.set(bx, curbHeight * 0.5, bz);
+        // Kerb lines around the parcel edge (flat decals, never colliders)
+        for (const sz of [-1, 1]) {
+          const k = this.addMeshWithEdges(streetsGroup, kerbNS, this.trimMat, InkShaderMaterial.defaultInkColor, false);
+          k.position.set(px, STREET_Y + paveT * 0.5, pz + sz * PARCEL_D * 0.5);
+        }
+        for (const sx of [-1, 1]) {
+          const k = this.addMeshWithEdges(streetsGroup, kerbEW, this.trimMat, InkShaderMaterial.defaultInkColor, false);
+          k.position.set(px + sx * PARCEL_W * 0.5, STREET_Y + paveT * 0.5, pz);
+        }
+      }
     }
 
-    // Road crosswalk zebra markings (ink line decals / flat boxes)
-    const crosswalkPositions: Array<[number, number, number, boolean]> = [
-      [28, 0, 24, false], // East-West crosswalk
-      [-28, 0, 24, false],
-      [0, 36, 24, true],  // North-South crosswalk
-      [0, -36, 24, true],
-      [60, 38, 20, true],
-      [60, -38, 20, true],
-      [-55, 38, 20, true],
-      [-55, -38, 20, true]
-    ];
+    // Zebra crossings centred on every road between parcels.
+    // A crossing spans the FULL WIDTH of the road it crosses: each bar runs the
+    // way pedestrians walk, and the bars repeat sideways across the crossing's
+    // own width. `acrossX` marks a crossing over a north-south road, where you
+    // walk in x, so its bars are long in x and repeat along z.
+    const roadX = [-CELL_X * 1.5, -CELL_X * 0.5, CELL_X * 0.5, CELL_X * 1.5];
+    const roadZ = [-CELL_Z * 1.5, -CELL_Z * 0.5, CELL_Z * 0.5, CELL_Z * 1.5];
+    const crosswalks: Array<[number, number, number, boolean]> = [];
+    // Crossings over the N-S roads: you walk east-west, across ROAD_W of tarmac
+    for (const rx of roadX) {
+      for (let row = -1; row <= 1; row++) crosswalks.push([rx, row * CELL_Z, ROAD_W, true]);
+    }
+    // Crossings over the E-W roads: you walk north-south, across ROAD_D
+    for (const rz of roadZ) {
+      for (let col = -1; col <= 1; col++) crosswalks.push([col * CELL_X, rz, ROAD_D, false]);
+    }
 
-    for (const [cx, cz, cLength, isRotated] of crosswalkPositions) {
-      const numStripes = 6;
-      const stripeW = 0.8;
-      const stripeL = 3.8;
-      const spacing = cLength / numStripes;
+    const crossingW = 5.2; // how wide the striped crossing itself is
+    const barT = 0.7;      // bar thickness, measured across the walking direction
+    const numBars = 6;
+    const barSpacing = crossingW / numBars;
+    for (const [cx, cz, roadSpan, acrossX] of crosswalks) {
+      for (let b = 0; b < numBars; b++) {
+        const offset = -crossingW * 0.5 + barSpacing * (b + 0.5);
+        const barGeom = new THREE.BoxGeometry(
+          acrossX ? roadSpan : barT,
+          0.02,
+          acrossX ? barT : roadSpan
+        );
+        const bar = this.addMeshWithEdges(streetsGroup, barGeom, this.sidewalkMat, InkShaderMaterial.defaultInkColor, false);
+        bar.position.set(
+          acrossX ? cx : cx + offset,
+          STREET_Y + 0.02,
+          acrossX ? cz + offset : cz
+        );
+      }
+    }
 
-      for (let s = 0; s < numStripes; s++) {
-        const offset = -cLength * 0.5 + s * spacing + spacing * 0.5;
-        const stripeGeom = new THREE.BoxGeometry(isRotated ? stripeL : stripeW, 0.02, isRotated ? stripeW : stripeL);
-        const stripe = this.addMeshWithEdges(streetsGroup, stripeGeom, this.sidewalkMat, InkShaderMaterial.defaultInkColor, false);
-        stripe.position.set(isRotated ? cx + offset : cx, 0.02, isRotated ? cz : cz + offset);
+    // Centre lane dashes down every road, so the grid reads from the rooftops
+    const dashGeomNS = new THREE.BoxGeometry(0.3, 0.02, 3.0);
+    const dashGeomEW = new THREE.BoxGeometry(3.0, 0.02, 0.3);
+    for (const rx of roadX) {
+      for (let z = -CELL_Z * 2; z <= CELL_Z * 2; z += 7.0) {
+        const d = this.addMeshWithEdges(streetsGroup, dashGeomNS, this.sidewalkMat, InkShaderMaterial.defaultInkColor, false);
+        d.position.set(rx, STREET_Y + 0.02, z);
+      }
+    }
+    for (const rz of roadZ) {
+      for (let x = -CELL_X * 2; x <= CELL_X * 2; x += 7.0) {
+        const d = this.addMeshWithEdges(streetsGroup, dashGeomEW, this.sidewalkMat, InkShaderMaterial.defaultInkColor, false);
+        d.position.set(x, STREET_Y + 0.02, rz);
       }
     }
 
@@ -302,10 +418,56 @@ export class CityBuilder {
     // Six-building ink district: construction site at center, one landmark per side.
     // Each building owns an ink palette + a traversal personality.
     const configs: SkyscraperConfig[] = [
-      // W. Dockside Terrace — skybridge dock, slate blue-grey ink
+      // ---- Row z = -50 ----------------------------------------------------
+      // 1 (NW) HUDSON WORKS — squat red-brick Brooklyn warehouse. Loading dock
+      // canopy, corbelled cornice, roof water tower and a smokestack that reads
+      // from anywhere in the district.
       {
-        x: -54.0,
-        z: 0.0,
+        ...cellCenter(-1, -1),
+        width: 28.0,
+        depth: 24.0,
+        height: 16.0,
+        // manualRoof builds the twin-tank waterworks roof, so no default tower
+        hasWaterTower: false,
+        hasHvac: false,
+        hasAntenna: false,
+        style: 'industrial',
+        manualRoof: true,
+        smokestack: true,
+        cornice: true,
+        loadingDock: true,
+        fireEscape: ['south'],
+        ink: 0x7a3b2e,
+        trimInk: 0x46211a
+      },
+      // 2 (N) is the two-storey depot — the one building you go inside.
+      // 3 (NE) MERCER LOFT — cast-iron SoHo loft. Tall arched shopfront bays,
+      // bracketed cornice, and a full-height zigzag fire escape facing the site.
+      {
+        ...cellCenter(1, -1),
+        width: 26.0,
+        depth: 24.0,
+        // Six cast-iron storeys — lower than the tenement block opposite, so no
+        // two roofs in the district sit at the same height.
+        height: 24.0,
+        hasWaterTower: true,
+        hasHvac: true,
+        hasAntenna: false,
+        style: 'terrace',
+        arcadeBays: true,
+        cornice: true,
+        stoop: true,
+        fireEscape: ['west', 'south'],
+        julietRows: 2,
+        ink: 0x2f5f4a,
+        trimInk: 0x18382a
+      },
+
+      // ---- Row z = 0 ------------------------------------------------------
+      // 4 (W) DOCKSIDE TERRACE — the skybridge dock. Its east face at x = -41 is
+      // exactly where the construction site's skybridge lands: do not move it.
+      {
+        ...cellCenter(-1, 0),
         width: 26.0,
         depth: 24.0,
         height: 18.0,
@@ -315,108 +477,34 @@ export class CityBuilder {
         style: 'terrace',
         skybridgeDock: true,
         julietRows: 2,
+        cornice: true,
         ink: 0x2a3a6e,
         trimInk: 0x141c42
       },
-      // E. Glass Slab — tall teal tower, balcony rows facing the site
+      // C is the construction site.
+      // 5 (E) THE CROWN — art-deco ziggurat, the district landmark. Two setbacks
+      // to walkable terraces, tiered balconies, and a spire on the crown.
       {
-        x: 52.0,
-        z: 0.0,
-        width: 20.0,
-        depth: 26.0,
-        height: 66.0,
-        hasWaterTower: true,
-        hasHvac: true,
-        hasAntenna: false,
-        style: 'modern',
-        ink: 0x24606e,
-        trimInk: 0x12333b
-      },
-      // N. Deco Crown — sepia art-deco tiers, walkable crown ring
-      {
-        x: 0.0,
-        z: 68.0,
+        ...cellCenter(1, 0),
         width: 26.0,
-        depth: 26.0,
+        depth: 24.0,
         height: 88.0,
         hasWaterTower: false,
         hasHvac: true,
         hasAntenna: true,
-        setbackHeight: 56.0,
-        setbackScale: 0.72,
+        setbackHeight: 52.0,
+        setbackScale: 0.66,
         style: 'artdeco',
+        cornice: true,
         ink: 0x6b4a2a,
         trimInk: 0x3d2a16
       },
-      // S. Brick Walkup — low red-brick terrace house, pergola roof
+
+      // ---- Row z = +50 ----------------------------------------------------
+      // 6 (SW) THE ORPHEUM — Broadway house. Marquee bulbs, blade sign, fly
+      // tower over the stage, roof pergola on the front-of-house deck.
       {
-        x: 0.0,
-        z: 42.0,
-        width: 24.0,
-        depth: 16.0,
-        height: 15.0,
-        hasWaterTower: true,
-        hasHvac: true,
-        hasAntenna: false,
-        style: 'terrace',
-        julietRows: 2,
-        pergola: true,
-        ink: 0x7a3b2e,
-        trimInk: 0x46211a
-      },
-      // NW. Waterworks — moss-green industrial block, tank farm + smokestack
-      {
-        x: -46.0,
-        z: -44.0,
-        width: 28.0,
-        depth: 22.0,
-        height: 13.0,
-        hasWaterTower: false,
-        hasHvac: false,
-        hasAntenna: false,
-        style: 'industrial',
-        manualRoof: true,
-        smokestack: true,
-        ink: 0x3f5a3a,
-        trimInk: 0x22341f
-      },
-      // SE. Ledge Tower — plum perch-ledge tower, zip up and sit
-      {
-        x: 46.0,
-        z: 46.0,
-        width: 18.0,
-        depth: 18.0,
-        height: 44.0,
-        hasWaterTower: true,
-        hasHvac: true,
-        hasAntenna: false,
-        style: 'modern',
-        perchLedges: true,
-        ink: 0x5a2f5a,
-        trimInk: 0x331a33
-      },
-      // NE. Copper Annex — verdigris mansard cap, dormers, juliet rows
-      {
-        x: 48.0,
-        z: -48.0,
-        width: 22.0,
-        depth: 22.0,
-        height: 34.0,
-        hasWaterTower: true,
-        hasHvac: true,
-        hasAntenna: false,
-        setbackHeight: 24.0,
-        setbackScale: 0.72,
-        style: 'modern',
-        julietRows: 2,
-        mansard: true,
-        ink: 0x3d6e5f,
-        trimInk: 0x234038
-      },
-      // SW. Noir Theater — charcoal stage house, marquee bulbs, fly tower
-      {
-        x: -48.0,
-        z: 48.0,
+        ...cellCenter(-1, 1),
         width: 30.0,
         depth: 20.0,
         height: 20.0,
@@ -427,8 +515,49 @@ export class CityBuilder {
         julietRows: 2,
         marquee: true,
         flyTower: true,
+        pergola: true,
         ink: 0x33363f,
         trimInk: 0x14161c
+      },
+      // 7 (S) PLAZA TOWER — glass slab lifted on pilotis. Its ground floor is an
+      // OPEN pillared parking deck that players and enemies walk straight
+      // through; the tower above is a closed volume you climb from the outside
+      // on balcony rows and perch ledges.
+      {
+        ...cellCenter(0, 1),
+        width: 24.0,
+        depth: 24.0,
+        height: 62.0,
+        hasWaterTower: true,
+        hasHvac: true,
+        hasAntenna: false,
+        style: 'modern',
+        pilotis: true,
+        pilotisHeight: 5.0,
+        perchLedges: true,
+        ink: 0x24606e,
+        trimInk: 0x12333b
+      },
+      // 8 (SE) ORCHARD ROW — red-brick tenement block. Fire escapes down two
+      // faces, stoops at the pavement, verdigris mansard cap with dormers.
+      {
+        ...cellCenter(1, 1),
+        width: 26.0,
+        depth: 22.0,
+        height: 30.0,
+        hasWaterTower: true,
+        hasHvac: true,
+        hasAntenna: false,
+        setbackHeight: 24.0,
+        setbackScale: 0.78,
+        style: 'modern',
+        mansard: true,
+        cornice: true,
+        stoop: true,
+        fireEscape: ['north', 'west'],
+        julietRows: 2,
+        ink: 0x5a2f5a,
+        trimInk: 0x331a33
       }
     ];
 
@@ -508,6 +637,13 @@ export class CityBuilder {
         coll.addBoxCoords(notchBack, c.height - 0.2, c.z + 2, faceX, c.height, c.z + hd, 'floor');
         coll.addBoxCoords(notchBack, 0, c.z - hd, faceX, c.height, c.z - 2, 'wall');
         coll.addBoxCoords(notchBack, c.height - 0.2, c.z - hd, faceX, c.height, c.z - 2, 'floor');
+      } else if (c.pilotis) {
+        // Ground floor is an OPEN pillared parking deck: no bulk shell down
+        // there, only the columns queued by buildPilotis. The tower starts at
+        // the podium, whose underside is the deck's ceiling.
+        const deckY = c.pilotisHeight ?? 5.0;
+        coll.addBoxCoords(c.x - hw, deckY, c.z - hd, c.x + hw, c.height, c.z + hd, 'wall');
+        coll.addBoxCoords(c.x - hw, c.height - 0.2, c.z - hd, c.x + hw, c.height, c.z + hd, 'floor');
       } else {
         coll.addBoxCoords(c.x - hw, 0, c.z - hd, c.x + hw, c.height, c.z + hd, 'wall');
         coll.addBoxCoords(c.x - hw, c.height - 0.2, c.z - hd, c.x + hw, c.height, c.z + hd, 'floor');
@@ -556,7 +692,7 @@ export class CityBuilder {
 
     // Lamp posts, hydrants, trash cans (ankle-to-chest blockers)
     for (const p of this.streetPropSpecs) {
-      coll.addBoxCoords(p.x - p.r, 0.5, p.z - p.r, p.x + p.r, 0.5 + p.h, p.z + p.r, 'wall');
+      coll.addBoxCoords(p.x - p.r, STREET_Y, p.z - p.r, p.x + p.r, STREET_Y + p.h, p.z + p.r, 'wall');
     }
 
     // Construction site floor slabs (match ConstructionSite slab tops, with stair cutout)
@@ -756,6 +892,15 @@ export class CityBuilder {
       coll.addBoxCoords(b.minX, b.minY, b.minZ, b.maxX, b.maxY, b.maxZ, b.tag);
     }
 
+    // Facade furniture queued by the mesh builders: cornice ledges, stoop steps,
+    // loading docks, pilotis columns, and climbable fire-escape flights.
+    for (const b of this.extraBoxSpecs) {
+      coll.addBoxCoords(b.minX, b.minY, b.minZ, b.maxX, b.maxY, b.maxZ, b.tag);
+    }
+    for (const r of this.extraRampSpecs) {
+      coll.addRampCoords(r.minX, r.minZ, r.maxX, r.maxZ, r.axis, r.y0, r.y1, r.thickness);
+    }
+
     coll.finalize();
     this.worldCollider = coll;
   }
@@ -766,6 +911,27 @@ export class CityBuilder {
    */
   public getBalconySpecs(): Array<{ cx: number; cy: number; cz: number; hw: number; hd: number; nx: number; nz: number }> {
     return this.balconySpecs.map((b) => ({ ...b }));
+  }
+
+  /** Fire-escape landing centres (world), for standability assertions. */
+  public getFireEscapeLandings(): Array<{
+    cx: number; cy: number; cz: number;
+    face: string; nx: number; nz: number; bx: number; bz: number;
+  }> {
+    return this.fireEscapeLandings.map((l) => ({ ...l }));
+  }
+
+  /** Hydrant latch anchors (bonnet tops) — the low street-level winch targets. */
+  public getHydrantAnchors(): THREE.Vector3[] {
+    return this.hydrantAnchors.map((a) => a.clone());
+  }
+
+  /**
+   * Footprints of every building in the district (world centre + size), so tests
+   * can assert nothing stands in the roadway.
+   */
+  public getBuildingFootprints(): Array<{ x: number; z: number; w: number; d: number }> {
+    return this.mapBuildingList.map((b) => ({ ...b }));
   }
 
   public getWorldCollider(): WorldCollider {
@@ -1554,6 +1720,16 @@ export class CityBuilder {
       this.buildJulietBalconies(bGroup, config, config.julietRows);
     }
 
+    // NYC street-and-facade furniture
+    if (config.fireEscape) {
+      for (const face of config.fireEscape) this.buildFireEscape(bGroup, config, face);
+    }
+    if (config.cornice) this.buildCornice(bGroup, config);
+    if (config.arcadeBays) this.buildArcadeBays(bGroup, config);
+    if (config.stoop) this.buildStoop(bGroup, config);
+    if (config.loadingDock) this.buildLoadingDock(bGroup, config);
+    if (config.pilotis) this.buildPilotis(bGroup, config);
+
     // Rooftop perimeter parapet wall: half a character tall, so you shoot over it
     // standing and are fully covered by it crouched.
     const parapetHeight = COVER_RAIL_HEIGHT;
@@ -1681,64 +1857,155 @@ export class CityBuilder {
       parent.add(m);
     };
 
+    /**
+     * Runs a callback for every bay on all FOUR faces, handing it the bay
+     * centre and the face normal. Every style used to dress only the two z
+     * faces, which is why the buildings read as flat cardboard from half the
+     * district — from the rooftops you see all four sides of everything.
+     */
+    const forEachBay = (
+      pitch: number,
+      inset: number,
+      cb: (x: number, z: number, nx: number, nz: number, bayW: number) => void
+    ): void => {
+      for (let x = -hw + inset; x <= hw - inset + 1e-6; x += pitch) {
+        cb(x, -hd, 0, -1, pitch);
+        cb(x, hd, 0, 1, pitch);
+      }
+      for (let z = -hd + inset; z <= hd - inset + 1e-6; z += pitch) {
+        cb(-hw, z, -1, 0, pitch);
+        cb(hw, z, 1, 0, pitch);
+      }
+    };
+
+    /** A band wrapping all four faces at height y — string course, spandrel, plinth. */
+    const wrapBand = (y: number, h: number, proj: number): void => {
+      flat(new THREE.BoxGeometry(width + proj * 2, h, depth + proj * 2), 0, y, 0);
+    };
+
+    // --- Tripartite base / shaft / capital, on every building ---------------
+    // A plinth at the pavement and a band under the parapet are what stop a
+    // massing block from reading as an untextured box.
+    const plinthH = Math.min(2.2, height * 0.18);
+    wrapBand(STREET_Y + plinthH * 0.5, plinthH, 0.35);
+    wrapBand(STREET_Y + plinthH + 0.18, 0.22, 0.5);
+    if (height > 12) wrapBand(height - 2.6, 0.3, 0.42);
+
     if (config.style === 'modern') {
-      // Glass tower: vertical mullion fins on all faces
-      for (let x = -hw + 1.5; x <= hw - 1.5; x += 3) {
-        for (const s of [-1, 1]) {
-          flat(new THREE.BoxGeometry(0.18, height, 0.3), x, height * 0.5, s * (hd + 0.1));
-        }
+      // Glass curtain wall: full-height mullion fins plus a spandrel band at
+      // every floor line, so the glazing reads as storeys rather than one sheet.
+      forEachBay(3.0, 1.5, (x, z, nx, nz) => {
+        flat(
+          new THREE.BoxGeometry(nx !== 0 ? 0.3 : 0.18, height - plinthH, nx !== 0 ? 0.18 : 0.3),
+          x + nx * 0.1, STREET_Y + plinthH + (height - plinthH) * 0.5, z + nz * 0.1
+        );
+      });
+      for (let y = STREET_Y + plinthH + 3.6; y < height - 2.8; y += 3.6) {
+        wrapBand(y, 0.28, 0.22);
       }
-      for (let z = -hd + 1.5; z <= hd - 1.5; z += 3) {
-        for (const s of [-1, 1]) {
-          flat(new THREE.BoxGeometry(0.3, height, 0.18), s * (hw + 0.1), height * 0.5, z);
-        }
-      }
-    } else if (config.style === 'terrace' && height <= 20) {
-      // Brick house: punched windows with sills + lintels on N/S faces
+      // Glazed double-height lobby at the base
+      forEachBay(3.0, 1.5, (x, z, nx, nz) => {
+        flat(
+          new THREE.BoxGeometry(nx !== 0 ? 0.14 : 2.4, plinthH * 0.8, nx !== 0 ? 2.4 : 0.14),
+          x + nx * 0.16, STREET_Y + plinthH * 0.55, z + nz * 0.16
+        );
+      });
+    } else if (config.style === 'terrace') {
+      // Masonry block: punched openings with sills and lintels, on all faces and
+      // at any height (the old rule skipped anything over 20m, which left the
+      // taller loft blocks completely undressed).
       const rows: number[] = [];
-      for (let y = 4.5; y < height - 2; y += 4) rows.push(y);
-      const cols: number[] = [];
-      for (let x = -hw + 3; x <= hw - 3; x += 4.5) cols.push(x);
+      for (let y = STREET_Y + plinthH + 2.2; y < height - 3.0; y += 3.6) rows.push(y);
       for (const y of rows) {
-        for (const s of [-1, 1]) {
-          const sill = new THREE.BoxGeometry(width - 2, 0.14, 0.16);
-          flat(sill, 0, y - 1.05, s * (hd + 0.05));
-          const lintel = new THREE.BoxGeometry(width - 2, 0.18, 0.16);
-          flat(lintel, 0, y + 1.05, s * (hd + 0.05));
-        }
-        for (const x of cols) {
-          for (const s of [-1, 1]) {
-            flat(new THREE.BoxGeometry(1.5, 1.9, 0.12), x, y, s * (hd + 0.05));
+        wrapBand(y - 1.15, 0.14, 0.2);  // continuous sill course
+        wrapBand(y + 1.15, 0.2, 0.26);  // lintel course
+        forEachBay(3.4, 1.9, (x, z, nx, nz) => {
+          flat(
+            new THREE.BoxGeometry(nx !== 0 ? 0.12 : 1.7, 2.0, nx !== 0 ? 1.7 : 0.12),
+            x + nx * 0.06, y, z + nz * 0.06
+          );
+          // Cast-iron blocks get a segmental arch over each opening
+          if (config.arcadeBays) {
+            const arch = new THREE.CylinderGeometry(0.85, 0.85, 0.14, 10, 1, false, 0, Math.PI);
+            const m = new THREE.Mesh(arch, trim);
+            m.rotation.z = Math.PI * 0.5;
+            if (nx !== 0) m.rotation.y = Math.PI * 0.5;
+            m.position.set(x + nx * 0.09, y + 1.0, z + nz * 0.09);
+            m.raycast = () => {};
+            parent.add(m);
           }
+        });
+      }
+      // Quoin strips at the corners
+      for (const sx of [-1, 1]) {
+        for (const sz of [-1, 1]) {
+          flat(new THREE.BoxGeometry(1.0, height - plinthH, 1.0),
+            sx * (hw - 0.2), STREET_Y + plinthH + (height - plinthH) * 0.5, sz * (hd - 0.2));
         }
       }
     } else if (config.style === 'artdeco') {
-      // Deco piers up the base tier + stepped ziggurat crown cap with peak latch
+      // Deco: unbroken vertical piers up BOTH tiers on all four faces, recessed
+      // spandrels between them, and a stepped ziggurat crown.
       const baseH = config.setbackHeight ?? height;
-      for (let x = -hw + 2; x <= hw - 2; x += 4) {
-        for (const s of [-1, 1]) {
-          flat(new THREE.BoxGeometry(0.5, baseH, 0.4), x, baseH * 0.5, s * (hd + 0.15));
+      const upperScale = config.setbackScale ?? 1;
+      forEachBay(4.0, 2.0, (x, z, nx, nz) => {
+        flat(
+          new THREE.BoxGeometry(nx !== 0 ? 0.45 : 0.6, baseH - plinthH, nx !== 0 ? 0.6 : 0.45),
+          x + nx * 0.16, STREET_Y + plinthH + (baseH - plinthH) * 0.5, z + nz * 0.16
+        );
+      });
+      if (upperScale < 1) {
+        const uw = width * upperScale * 0.5;
+        const ud = depth * upperScale * 0.5;
+        const upperH = height - baseH;
+        for (let x = -uw + 2.0; x <= uw - 2.0; x += 3.4) {
+          for (const sgn of [-1, 1]) {
+            flat(new THREE.BoxGeometry(0.4, upperH, 0.5), x, baseH + upperH * 0.5, sgn * (ud + 0.14));
+          }
         }
+        for (let z = -ud + 2.0; z <= ud - 2.0; z += 3.4) {
+          for (const sgn of [-1, 1]) {
+            flat(new THREE.BoxGeometry(0.5, upperH, 0.4), sgn * (uw + 0.14), baseH + upperH * 0.5, z);
+          }
+        }
+        // String course marking the setback
+        flat(new THREE.BoxGeometry(width * upperScale + 1.0, 0.4, depth * upperScale + 1.0), 0, baseH + 0.2, 0);
       }
-      let capW = width * (config.setbackScale ?? 1) * 0.6;
+      let capW = width * upperScale * 0.62;
       let capY = height;
-      for (let s = 0; s < 3; s++) {
+      for (let st = 0; st < 4; st++) {
         flat(new THREE.BoxGeometry(capW, 0.9, capW * (depth / width)), 0, capY + 0.45, 0);
         capY += 0.9;
-        capW *= 0.72;
+        capW *= 0.74;
       }
+      // Spire finial on the crown
+      const spire = new THREE.CylinderGeometry(0.06, 0.5, 6.0, 8);
+      flat(spire, 0, capY + 3.0, 0);
+      this.webAnchors.push(new THREE.Vector3(config.x, capY + 6.2, config.z));
       this.webAnchors.push(new THREE.Vector3(config.x, capY + 0.6, config.z));
     } else if (config.style === 'industrial') {
-      // Corrugated cladding bands + loading door + vents
-      for (let y = 2; y < height; y += 2) {
-        flat(new THREE.BoxGeometry(width + 0.3, 0.22, depth + 0.3), 0, y, 0);
+      // Corrugated cladding bands wrapping the block, brick pilaster strips
+      // between them, a goods door and clerestory vents.
+      for (let y = STREET_Y + plinthH + 1.6; y < height - 1.0; y += 2.0) {
+        wrapBand(y, 0.22, 0.15);
       }
+      forEachBay(4.6, 2.3, (x, z, nx, nz) => {
+        flat(
+          new THREE.BoxGeometry(nx !== 0 ? 0.34 : 0.7, height - plinthH, nx !== 0 ? 0.7 : 0.34),
+          x + nx * 0.14, STREET_Y + plinthH + (height - plinthH) * 0.5, z + nz * 0.14
+        );
+      });
       const door = new THREE.BoxGeometry(4.5, 5.0, 0.2);
-      flat(door, 0, 2.5, hd + 0.08);
+      flat(door, 0, STREET_Y + 2.5, hd + 0.08);
       const doorFrame = new THREE.BoxGeometry(5.1, 0.3, 0.24);
-      flat(doorFrame, 0, 5.1, hd + 0.08);
-      for (const s of [-1, 1]) {
-        flat(new THREE.BoxGeometry(1.6, 1.0, 0.14), s * 6, 8.5, hd + 0.06);
+      flat(doorFrame, 0, STREET_Y + 5.1, hd + 0.08);
+      for (const sgn of [-1, 1]) {
+        flat(new THREE.BoxGeometry(1.6, 1.0, 0.14), sgn * 6, height - 4.0, hd + 0.06);
+        flat(new THREE.BoxGeometry(0.14, 1.0, 1.6), sgn * (hw + 0.06), height - 4.0, 0);
+      }
+      // Corbelled brick crown, stepping out in three courses
+      for (let st = 0; st < 3; st++) {
+        wrapBand(height - 1.6 + st * 0.4, 0.36, 0.18 + st * 0.14);
       }
     }
 
@@ -2378,6 +2645,477 @@ export class CityBuilder {
    * Juliet rails for short houses: a rail + sill + latches on the facade.
    * Decorative only (no standing shells) — swing past, don't land.
    */
+  /** Outward unit normal for a named face. */
+  private static faceNormal(face: 'north' | 'south' | 'east' | 'west'): { nx: number; nz: number } {
+    if (face === 'east') return { nx: 1, nz: 0 };
+    if (face === 'west') return { nx: -1, nz: 0 };
+    if (face === 'north') return { nx: 0, nz: -1 };
+    return { nx: 0, nz: 1 };
+  }
+
+  /**
+   * NYC zigzag FIRE ESCAPE down one face.
+   *
+   * Laid out as three bays along the facade — a landing bay at each end and a
+   * stair bay between them:
+   *
+   *      A            middle           B
+   *   [landing]......[  stair  ]......[landing]
+   *
+   * Landings alternate ends floor by floor (even levels in bay A, odd in bay B)
+   * and the stair crosses the middle bay to join them, so the run climbs back
+   * and forth exactly like the real thing.
+   *
+   * Two rules make it actually walkable, which the first version got wrong:
+   *  - The middle bay NEVER holds a platform, so a flight always has open
+   *    headroom above it instead of arriving under the next landing.
+   *  - Landings are LAND_DEPTH deep, comfortably wider than the player capsule
+   *    (0.6m radius), and carry no rail on the stair-facing end. A 1.6m deep
+   *    landing railed on both ends left ~0.25m of standable floor, which is why
+   *    it felt like you were falling off it.
+   */
+  private buildFireEscape(
+    parent: THREE.Group,
+    config: SkyscraperConfig,
+    face: 'north' | 'south' | 'east' | 'west'
+  ): void {
+    const { nx, nz } = CityBuilder.faceNormal(face);
+    const alongFace = nx !== 0 ? config.depth : config.width;
+    const hw = config.width * 0.5;
+    const hd = config.depth * 0.5;
+
+    const LAND_W = 2.8;      // landing width along the facade
+    const LAND_DEPTH = 2.4;  // how far the assembly projects from the wall
+    const STAIR_RUN = 6.2;   // middle bay: 3.5 rise over 6.2 run is ~29 degrees,
+    const RISE = 3.5;        // the same slope as the site stairs and grand stair
+    const total = LAND_W * 2 + STAIR_RUN;
+    if (total > alongFace - 2.0) return; // no room on this face
+
+    const railT = 0.12;
+    const tm = STAIR_RUN * 0.5;              // middle bay half width
+    const tOuterA = -total * 0.5;            // far end of bay A
+    const tOuterB = total * 0.5;             // far end of bay B
+
+    // Facade point and the tangential axis running along it
+    const fx = config.x + nx * hw;
+    const fz = config.z + nz * hd;
+    const tx = -nz;
+    const tz = nx;
+
+    /** Local (tangent, outward) -> world position. */
+    const world = (t: number, o: number, y: number) =>
+      new THREE.Vector3(fx + nx * o + tx * t, y, fz + nz * o + tz * t);
+
+    /** Local (tangent span, outward span) -> world axis-aligned box, shelled. */
+    const shell = (t0: number, t1: number, o0: number, o1: number, y0: number, y1: number, tag: ColliderTag) => {
+      const a = world(t0, o0, 0);
+      const b = world(t1, o1, 0);
+      this.addShellBox(
+        Math.min(a.x, b.x), y0, Math.min(a.z, b.z),
+        Math.max(a.x, b.x), y1, Math.max(a.z, b.z), tag
+      );
+    };
+
+    /** Local box -> mesh, positioned and sized in world axes. */
+    const slab = (t0: number, t1: number, o0: number, o1: number, yc: number, h: number, mat: THREE.Material) => {
+      const a = world(t0, o0, 0);
+      const b = world(t1, o1, 0);
+      const w = Math.abs(b.x - a.x);
+      const d = Math.abs(b.z - a.z);
+      const mesh = this.addMeshWithEdges(parent, new THREE.BoxGeometry(Math.max(w, 0.02), h, Math.max(d, 0.02)), mat, InkShaderMaterial.defaultInkColor, true);
+      mesh.position.set((a.x + b.x) * 0.5 - config.x, yc, (a.z + b.z) * 0.5 - config.z);
+      return mesh;
+    };
+
+    const baseY = STREET_Y + 4.0;
+    const levels: number[] = [];
+    for (let y = baseY; y <= config.height - 2.2; y += RISE) levels.push(y);
+    if (levels.length < 2) return;
+
+    for (let i = 0; i < levels.length; i++) {
+      const y = levels[i];
+      const inBayA = i % 2 === 0;
+      const t0 = inBayA ? tOuterA : tm;
+      const t1 = inBayA ? -tm : tOuterB;
+      const tMid = (t0 + t1) * 0.5;
+      const tStairSide = inBayA ? -tm : tm;   // end the flight arrives at
+      const tOuterEnd = inBayA ? tOuterA : tOuterB; // end that gets a rail
+
+      // --- landing platform: grated deck + landable lip ---
+      slab(t0, t1, 0, LAND_DEPTH, y - 0.06, 0.12, this.metalMat);
+      shell(t0, t1, 0, LAND_DEPTH, y - 0.25, y, 'floor');
+
+      const lipA = world(t0, LAND_DEPTH - 0.09, 0);
+      const lipB = world(t1, LAND_DEPTH, 0);
+      const lip = new THREE.Mesh(
+        new THREE.BoxGeometry(Math.max(Math.abs(lipB.x - lipA.x), 0.14), 0.04, Math.max(Math.abs(lipB.z - lipA.z), 0.14)),
+        this.landableTrimMat
+      );
+      lip.position.set((lipA.x + lipB.x) * 0.5 - config.x, y + 0.04, (lipA.z + lipB.z) * 0.5 - config.z);
+      lip.raycast = () => {};
+      parent.add(lip);
+
+      // --- rails: outer edge + the far end only. The stair-facing end stays
+      // open so you can walk straight off the landing onto the flight. ---
+      slab(t0, t1, LAND_DEPTH - railT, LAND_DEPTH, y + COVER_RAIL_HEIGHT * 0.5, COVER_RAIL_HEIGHT, this.metalMat);
+      shell(t0, t1, LAND_DEPTH - railT, LAND_DEPTH, y, y + COVER_RAIL_HEIGHT, 'wall');
+
+      const tEndInner = tOuterEnd + (inBayA ? railT : -railT);
+      slab(tOuterEnd, tEndInner, 0, LAND_DEPTH, y + COVER_RAIL_HEIGHT * 0.5, COVER_RAIL_HEIGHT, this.metalMat);
+      shell(tOuterEnd, tEndInner, 0, LAND_DEPTH, y, y + COVER_RAIL_HEIGHT, 'wall');
+
+      // Balusters along the outer rail, and a capping handrail
+      for (let bt = Math.min(t0, t1) + 0.4; bt < Math.max(t0, t1); bt += 0.7) {
+        slab(bt, bt + 0.07, LAND_DEPTH - 0.1, LAND_DEPTH - 0.03, y + COVER_RAIL_HEIGHT * 0.5, COVER_RAIL_HEIGHT, this.metalMat);
+      }
+
+      // Brackets tying the landing back to the wall
+      for (const bt of [Math.min(t0, t1) + 0.3, Math.max(t0, t1) - 0.3]) {
+        const br = slab(bt, bt + 0.1, 0.2, LAND_DEPTH - 0.4, y - 0.5, 0.9, this.metalMat);
+        br.rotation.set(0, 0, 0);
+      }
+
+      // Latch anchors at the landing's outer corners
+      for (const t of [t0, t1]) {
+        const p = world(t, LAND_DEPTH, y + COVER_RAIL_HEIGHT + 0.1);
+        this.webAnchors.push(p);
+      }
+      const landCentre = world(tMid, LAND_DEPTH * 0.5, y);
+      this.fireEscapeLandings.push({
+        cx: landCentre.x,
+        cy: y,
+        cz: landCentre.z,
+        face,
+        nx,
+        nz,
+        bx: config.x,
+        bz: config.z,
+      });
+
+      // --- flight up to the next landing, crossing the middle bay ---
+      if (i + 1 >= levels.length) continue;
+      const yTop = levels[i + 1];
+      const tTopSide = inBayA ? tm : -tm; // where the next landing starts
+
+      // Walkable ramp shell. Work out which world end is the low one so the
+      // ramp's y0/y1 line up with its min/max coordinate.
+      const pLow = world(tStairSide, 0, y);
+      const pHigh = world(tTopSide, 0, yTop);
+      const oA = world(0, 0.15, 0);
+      const oB = world(0, LAND_DEPTH - 0.15, 0);
+      if (nx !== 0) {
+        const zLo = Math.min(pLow.z, pHigh.z);
+        const zHi = Math.max(pLow.z, pHigh.z);
+        const lowIsMinZ = pLow.z <= pHigh.z;
+        this.addShellRamp(
+          Math.min(oA.x, oB.x), zLo, Math.max(oA.x, oB.x), zHi, 'z',
+          lowIsMinZ ? y : yTop,
+          lowIsMinZ ? yTop : y,
+          0.35
+        );
+      } else {
+        const xLo = Math.min(pLow.x, pHigh.x);
+        const xHi = Math.max(pLow.x, pHigh.x);
+        const lowIsMinX = pLow.x <= pHigh.x;
+        this.addShellRamp(
+          xLo, Math.min(oA.z, oB.z), xHi, Math.max(oA.z, oB.z), 'x',
+          lowIsMinX ? y : yTop,
+          lowIsMinX ? yTop : y,
+          0.35
+        );
+      }
+
+      // Visual treads marching up the flight
+      const steps = 9;
+      for (let st = 0; st < steps; st++) {
+        const f = (st + 0.5) / steps;
+        const tStep = tStairSide + (tTopSide - tStairSide) * f;
+        const yStep = y + (yTop - y) * f;
+        const stepT = (tTopSide - tStairSide) / steps;
+        slab(tStep - stepT * 0.42, tStep + stepT * 0.42, 0.2, LAND_DEPTH - 0.2, yStep, 0.1, this.metalMat);
+      }
+
+      // Sloped stringer + guard along the flight's outer edge, so you cannot
+      // walk off the open side on the way up.
+      shell(tStairSide, tTopSide, LAND_DEPTH - railT, LAND_DEPTH, y, yTop + COVER_RAIL_HEIGHT, 'wall');
+      const sA = world(tStairSide, LAND_DEPTH - railT, 0);
+      const sB = world(tTopSide, LAND_DEPTH, 0);
+      const runLen = Math.hypot(sB.x - sA.x, sB.z - sA.z);
+      const railGeom = new THREE.BoxGeometry(
+        nx !== 0 ? railT : Math.hypot(runLen, yTop - y),
+        0.1,
+        nx !== 0 ? Math.hypot(runLen, yTop - y) : railT
+      );
+      const slopeRail = this.addMeshWithEdges(parent, railGeom, this.metalMat, InkShaderMaterial.defaultInkColor, false);
+      const slope = Math.atan2(yTop - y, runLen);
+      if (nx !== 0) slopeRail.rotation.x = (pHigh.z > pLow.z ? -1 : 1) * slope;
+      else slopeRail.rotation.z = (pHigh.x > pLow.x ? 1 : -1) * slope;
+      slopeRail.position.set(
+        (sA.x + sB.x) * 0.5 - config.x,
+        (y + yTop) * 0.5 + COVER_RAIL_HEIGHT,
+        (sA.z + sB.z) * 0.5 - config.z
+      );
+    }
+
+    // --- drop ladder from the lowest landing down to the pavement ---
+    const tLad = tOuterA + LAND_W * 0.5;
+    const ladderTop = levels[0];
+    for (const sgn of [-1, 1]) {
+      slab(tLad + sgn * 0.28, tLad + sgn * 0.28 + 0.09, LAND_DEPTH - 0.5, LAND_DEPTH - 0.41,
+        (ladderTop + STREET_Y) * 0.5, ladderTop - STREET_Y, this.metalMat);
+    }
+    for (let ry = STREET_Y + 0.5; ry < ladderTop - 0.3; ry += 0.42) {
+      slab(tLad - 0.28, tLad + 0.28, LAND_DEPTH - 0.48, LAND_DEPTH - 0.43, ry, 0.05, this.metalMat);
+    }
+    // Climbing the ladder is a web/zip move, so it gets a latch at the top
+    this.webAnchors.push(world(tLad, LAND_DEPTH - 0.45, ladderTop + 0.4));
+  }
+
+  /**
+   * Projecting bracketed cornice under the parapet — the crowning band on nearly
+   * every pre-war NYC facade, and a thin standable ledge you can perch on.
+   */
+  private buildCornice(parent: THREE.Group, config: SkyscraperConfig): void {
+    const y = config.height - 1.4;
+    const proj = 0.55;
+    const bandH = 0.7;
+    const w = config.width + proj * 2;
+    const d = config.depth + proj * 2;
+
+    const bandGeom = new THREE.BoxGeometry(w, bandH, d);
+    const band = this.addMeshWithEdges(parent, bandGeom, this.trimMat, InkShaderMaterial.defaultInkColor, true);
+    band.position.set(0, y + bandH * 0.5, 0);
+
+    // Dentil brackets under the overhang, on all four faces
+    const brW = 0.18;
+    const brGeom = new THREE.BoxGeometry(brW, 0.4, proj);
+    const brGeomZ = new THREE.BoxGeometry(proj, 0.4, brW);
+    for (const sz of [-1, 1]) {
+      for (let bx = -config.width * 0.5 + 1.0; bx <= config.width * 0.5 - 1.0; bx += 2.0) {
+        const br = this.addMeshWithEdges(parent, brGeom, this.trimMat, InkShaderMaterial.defaultInkColor, false);
+        br.position.set(bx, y - 0.2, sz * (config.depth * 0.5 + proj * 0.5));
+      }
+    }
+    for (const sx of [-1, 1]) {
+      for (let bz = -config.depth * 0.5 + 1.0; bz <= config.depth * 0.5 - 1.0; bz += 2.0) {
+        const br = this.addMeshWithEdges(parent, brGeomZ, this.trimMat, InkShaderMaterial.defaultInkColor, false);
+        br.position.set(sx * (config.width * 0.5 + proj * 0.5), y - 0.2, bz);
+      }
+    }
+
+    // Standable ledge ring on top of the overhang + corner latches
+    const top = y + bandH;
+    this.addShellBox(config.x - w * 0.5, top - 0.2, config.z - d * 0.5, config.x + w * 0.5, top, config.z - config.depth * 0.5, 'floor');
+    this.addShellBox(config.x - w * 0.5, top - 0.2, config.z + config.depth * 0.5, config.x + w * 0.5, top, config.z + d * 0.5, 'floor');
+    this.addShellBox(config.x - w * 0.5, top - 0.2, config.z - config.depth * 0.5, config.x - config.width * 0.5, top, config.z + config.depth * 0.5, 'floor');
+    this.addShellBox(config.x + config.width * 0.5, top - 0.2, config.z - config.depth * 0.5, config.x + w * 0.5, top, config.z + config.depth * 0.5, 'floor');
+    for (const sx of [-1, 1]) {
+      for (const sz of [-1, 1]) {
+        this.webAnchors.push(new THREE.Vector3(
+          config.x + sx * w * 0.5, top + 0.1, config.z + sz * d * 0.5
+        ));
+      }
+    }
+  }
+
+  /**
+   * Cast-iron shopfront arcade along the site-facing face: tall arched bays with
+   * slender columns, the signature of a SoHo loft block.
+   */
+  private buildArcadeBays(parent: THREE.Group, config: SkyscraperConfig): void {
+    const { nx, nz } = this.faceTowardCenter(config);
+    const hw = config.width * 0.5;
+    const hd = config.depth * 0.5;
+    const alongFace = nx !== 0 ? config.depth : config.width;
+    const tx = -nz;
+    const tz = nx;
+    const bays = Math.max(3, Math.floor(alongFace / 3.6));
+    const pitch = alongFace / bays;
+    const bayH = 4.2;
+
+    for (let b = 0; b < bays; b++) {
+      const t = -alongFace * 0.5 + pitch * (b + 0.5);
+      const px = nx * (hw + 0.12) + tx * t;
+      const pz = nz * (hd + 0.12) + tz * t;
+
+      // Slender cast-iron column between bays
+      const colGeom = new THREE.CylinderGeometry(0.16, 0.18, bayH, 8);
+      const col = this.addMeshWithEdges(parent, colGeom, this.trimMat, InkShaderMaterial.defaultInkColor, false);
+      col.position.set(
+        nx * (hw + 0.12) + tx * (t - pitch * 0.5),
+        STREET_Y + bayH * 0.5,
+        nz * (hd + 0.12) + tz * (t - pitch * 0.5)
+      );
+
+      // Arched head over the bay
+      const archGeom = new THREE.CylinderGeometry(pitch * 0.42, pitch * 0.42, 0.24, 12, 1, false, 0, Math.PI);
+      const arch = this.addMeshWithEdges(parent, archGeom, this.trimMat, InkShaderMaterial.defaultInkColor, false);
+      arch.rotation.z = Math.PI * 0.5;
+      if (nx !== 0) arch.rotation.y = Math.PI * 0.5;
+      arch.position.set(px, STREET_Y + bayH, pz);
+    }
+
+    // Spandrel band capping the shopfront, and a latch line above it
+    const bandGeom = new THREE.BoxGeometry(nx !== 0 ? 0.3 : alongFace, 0.5, nx !== 0 ? alongFace : 0.3);
+    const band = this.addMeshWithEdges(parent, bandGeom, this.trimMat, InkShaderMaterial.defaultInkColor, false);
+    band.position.set(nx * (hw + 0.15), STREET_Y + bayH + 0.5, nz * (hd + 0.15));
+    this.webAnchors.push(new THREE.Vector3(
+      config.x + nx * (hw + 0.3), STREET_Y + bayH + 0.9, config.z + nz * (hd + 0.3)
+    ));
+  }
+
+  /**
+   * Brownstone stoop at the site-facing entrance: four steps up to a small railed
+   * landing. Street-level silhouette, and a low perch to fight from.
+   */
+  private buildStoop(parent: THREE.Group, config: SkyscraperConfig): void {
+    const { nx, nz } = this.faceTowardCenter(config);
+    const hw = config.width * 0.5;
+    const hd = config.depth * 0.5;
+    const tx = -nz;
+    const tz = nx;
+    const steps = 4;
+    const stepRise = 0.32;
+    const stepRun = 0.4;
+    const stoopW = 3.0;
+
+    for (let st = 0; st < steps; st++) {
+      const out = (steps - st) * stepRun;
+      const top = STREET_Y + (st + 1) * stepRise;
+      const geom = new THREE.BoxGeometry(nx !== 0 ? stepRun : stoopW, stepRise, nx !== 0 ? stoopW : stepRun);
+      const step = this.addMeshWithEdges(parent, geom, this.trimMat, InkShaderMaterial.defaultInkColor, true);
+      step.position.set(nx * (hw + out - stepRun * 0.5), top - stepRise * 0.5, nz * (hd + out - stepRun * 0.5));
+
+      const wx = config.x + nx * (hw + out - stepRun * 0.5);
+      const wz = config.z + nz * (hd + out - stepRun * 0.5);
+      const halfA = nx !== 0 ? stepRun * 0.5 : stoopW * 0.5;
+      const halfB = nx !== 0 ? stoopW * 0.5 : stepRun * 0.5;
+      this.addShellBox(wx - halfA, top - 0.2, wz - halfB, wx + halfA, top, wz + halfB, 'floor');
+    }
+
+    // Cheek walls flanking the steps, at rail height
+    const cheekLen = steps * stepRun;
+    const cheekGeom = new THREE.BoxGeometry(nx !== 0 ? cheekLen : 0.22, COVER_RAIL_HEIGHT, nx !== 0 ? 0.22 : cheekLen);
+    for (const sgn of [-1, 1]) {
+      const cheek = this.addMeshWithEdges(parent, cheekGeom, this.trimMat, InkShaderMaterial.defaultInkColor, true);
+      cheek.position.set(
+        nx * (hw + cheekLen * 0.5) + tx * sgn * stoopW * 0.5,
+        STREET_Y + steps * stepRise + COVER_RAIL_HEIGHT * 0.5,
+        nz * (hd + cheekLen * 0.5) + tz * sgn * stoopW * 0.5
+      );
+    }
+  }
+
+  /**
+   * Warehouse loading dock: a raised platform along the face under a canopy on
+   * tie rods. Reads as a working goods entrance and gives ground-level cover.
+   */
+  private buildLoadingDock(parent: THREE.Group, config: SkyscraperConfig): void {
+    const { nx, nz } = this.faceTowardCenter(config);
+    const hw = config.width * 0.5;
+    const hd = config.depth * 0.5;
+    const alongFace = (nx !== 0 ? config.depth : config.width) * 0.55;
+    const outD = 2.4;
+    const platTop = STREET_Y + 1.1;
+
+    const platGeom = new THREE.BoxGeometry(nx !== 0 ? outD : alongFace, 1.1, nx !== 0 ? alongFace : outD);
+    const plat = this.addMeshWithEdges(parent, platGeom, this.roofMat, InkShaderMaterial.defaultInkColor, true);
+    plat.position.set(nx * (hw + outD * 0.5), platTop - 0.55, nz * (hd + outD * 0.5));
+
+    const wx = config.x + nx * (hw + outD * 0.5);
+    const wz = config.z + nz * (hd + outD * 0.5);
+    const halfA = (nx !== 0 ? outD : alongFace) * 0.5;
+    const halfB = (nx !== 0 ? alongFace : outD) * 0.5;
+    this.addShellBox(wx - halfA, STREET_Y, wz - halfB, wx + halfA, platTop, wz + halfB, 'wall');
+    this.addShellBox(wx - halfA, platTop - 0.2, wz - halfB, wx + halfA, platTop, wz + halfB, 'floor');
+
+    // Canopy over the dock, slung on tie rods
+    const canopyY = STREET_Y + 4.4;
+    const canGeom = new THREE.BoxGeometry(nx !== 0 ? outD + 0.6 : alongFace + 1.2, 0.18, nx !== 0 ? alongFace + 1.2 : outD + 0.6);
+    const canopy = this.addMeshWithEdges(parent, canGeom, this.metalMat, InkShaderMaterial.defaultInkColor, true);
+    canopy.position.set(nx * (hw + outD * 0.5), canopyY, nz * (hd + outD * 0.5));
+    this.addShellBox(wx - halfA - 0.3, canopyY - 0.09, wz - halfB - 0.6, wx + halfA + 0.3, canopyY + 0.09, wz + halfB + 0.6, 'floor');
+
+    const rodGeom = new THREE.CylinderGeometry(0.05, 0.05, 3.2, 6);
+    const tx = -nz;
+    const tz = nx;
+    for (const sgn of [-1, 1]) {
+      const rod = this.addMeshWithEdges(parent, rodGeom, this.metalMat, InkShaderMaterial.defaultInkColor, false);
+      rod.rotation.z = nx !== 0 ? 0.5 : 0;
+      rod.rotation.x = nz !== 0 ? 0.5 : 0;
+      rod.position.set(
+        nx * (hw + outD * 0.4) + tx * sgn * alongFace * 0.45,
+        canopyY - 1.5,
+        nz * (hd + outD * 0.4) + tz * sgn * alongFace * 0.45
+      );
+    }
+    this.webAnchors.push(new THREE.Vector3(wx, canopyY + 0.3, wz));
+  }
+
+  /**
+   * PILOTIS: lifts the tower on columns so its ground floor is an open parking
+   * deck. Only the columns are solid below the podium, so players and enemies
+   * walk straight through; `buildCollisionShells` skips the ground-level bulk
+   * for this building (see the `pilotis` branch there).
+   */
+  private buildPilotis(parent: THREE.Group, config: SkyscraperConfig): void {
+    const deckY = config.pilotisHeight ?? 5.0;
+    const hw = config.width * 0.5;
+    const hd = config.depth * 0.5;
+    const inset = 1.8;
+    const colR = 0.55;
+
+    // Columns run down the two side edges only, the way a real parking deck is
+    // framed: the middle bays stay wide open so players and enemies cross the
+    // ground floor in a straight line.
+    for (const px of [-hw + inset, hw - inset]) {
+      for (const pz of [-hd + inset, 0, hd - inset]) {
+        const colGeom = new THREE.BoxGeometry(colR * 2, deckY - STREET_Y, colR * 2);
+        const col = this.addMeshWithEdges(parent, colGeom, this.trimMat, InkShaderMaterial.defaultInkColor, true);
+        col.position.set(px, (deckY + STREET_Y) * 0.5, pz);
+        this.addShellBox(
+          config.x + px - colR, STREET_Y, config.z + pz - colR,
+          config.x + px + colR, deckY, config.z + pz + colR, 'wall'
+        );
+      }
+    }
+
+    // Podium slab: the parking deck's ceiling and the tower's underside. Shelled
+    // as a 'floor' so ceilingAt reports it — that is what stops you standing up
+    // out of a crouch under the deck, and what caps the open ground floor.
+    const slabGeom = new THREE.BoxGeometry(config.width + 1.2, 0.5, config.depth + 1.2);
+    const slab = this.addMeshWithEdges(parent, slabGeom, this.roofMat, InkShaderMaterial.defaultInkColor, true);
+    slab.position.set(0, deckY + 0.25, 0);
+    this.addShellBox(
+      config.x - hw - 0.6, deckY, config.z - hd - 0.6,
+      config.x + hw + 0.6, deckY + 0.5, config.z + hd + 0.6, 'floor'
+    );
+
+    // Parking bay stripes, and a split kerb island for cover that still leaves a
+    // clear lane straight up the middle of the deck.
+    const stripeGeom = new THREE.BoxGeometry(0.12, 0.02, 4.0);
+    for (let px = -hw + 3.0; px <= hw - 3.0; px += 2.6) {
+      const st = this.addMeshWithEdges(parent, stripeGeom, this.sidewalkMat, InkShaderMaterial.defaultInkColor, false);
+      st.position.set(px, STREET_Y + 0.02, 0);
+    }
+    const islandLen = Math.max(2.0, hw - 5.0);
+    const islandGeom = new THREE.BoxGeometry(islandLen, COVER_RAIL_HEIGHT, 1.2);
+    for (const sgn of [-1, 1]) {
+      const cxIsl = sgn * (hw - 1.5 - islandLen * 0.5);
+      const island = this.addMeshWithEdges(parent, islandGeom, this.trimMat, InkShaderMaterial.defaultInkColor, true);
+      island.position.set(cxIsl, STREET_Y + COVER_RAIL_HEIGHT * 0.5, hd - 4.0);
+      this.addShellBox(
+        config.x + cxIsl - islandLen * 0.5, STREET_Y, config.z + hd - 4.6,
+        config.x + cxIsl + islandLen * 0.5, STREET_Y + COVER_RAIL_HEIGHT, config.z + hd - 3.4, 'wall'
+      );
+    }
+
+    // Latches under the deck edge, so you can web into the parking level
+    for (const sx of [-1, 1]) {
+      this.webAnchors.push(new THREE.Vector3(config.x + sx * (hw + 0.6), deckY + 0.6, config.z));
+    }
+  }
+
   private buildJulietBalconies(parent: THREE.Group, config: SkyscraperConfig, rows: number): void {
     const { nx, nz } = this.faceTowardCenter(config);
     const hw = config.width * 0.5;
@@ -2505,16 +3243,24 @@ export class CityBuilder {
   private buildLampPosts(): void {
     const lampsGroup = new THREE.Group();
     lampsGroup.name = 'LampPosts';
-    const positions: Array<[number, number]> = [
-      [28, 28], [-28, 28], [28, -28], [-28, -28],
-      [64, 0], [-64, 0], [0, 24], [0, -30],
-      [100, 0], [-100, 0], [0, 100], [0, -100],
-      [100, 100], [-100, 100], [100, -100], [-100, -100],
-    ];
+    // Two lamps per parcel, on diagonally opposite pavement corners, so every
+    // junction is lit from both sides and the grid reads from the rooftops.
+    const positions: Array<[number, number]> = [];
+    const inX = PARCEL_W * 0.5 - 2.0;
+    const inZ = PARCEL_D * 0.5 - 2.0;
+    for (let col = -2; col <= 2; col++) {
+      for (let row = -2; row <= 2; row++) {
+        const cx = col * CELL_X;
+        const cz = row * CELL_Z;
+        const flip = (col + row) % 2 === 0 ? 1 : -1;
+        positions.push([cx - inX * flip, cz - inZ]);
+        positions.push([cx + inX * flip, cz + inZ]);
+      }
+    }
     for (const [lx, lz] of positions) {
       const poleGeom = new THREE.CylinderGeometry(0.1, 0.14, 7.0, 8);
       const pole = this.addMeshWithEdges(lampsGroup, poleGeom, this.metalMat, InkShaderMaterial.defaultInkColor, true);
-      pole.position.set(lx, 0.5 + 3.5, lz);
+      pole.position.set(lx, STREET_Y + 3.5, lz);
 
       const armGeom = new THREE.BoxGeometry(1.4, 0.1, 0.1);
       const arm = this.addMeshWithEdges(lampsGroup, armGeom, this.metalMat, InkShaderMaterial.defaultInkColor, false);
@@ -2548,40 +3294,66 @@ export class CityBuilder {
     const propsGroup = new THREE.Group();
     propsGroup.name = 'StreetProps';
 
-    const hydrants: Array<[number, number]> = [
-      [14, 14], [-14, 14], [14, -14], [-14, -14],
-      [30, 8], [-30, -8], [8, 30], [-8, -30], [40, -20], [-40, 20],
-    ];
+    // Hydrants stand on the PAVEMENT, one at the middle of each parcel's street
+    // edge, set 1.2m back from the kerb line — never in the roadway and never
+    // buried in a facade, which is where the old hand-placed list put them.
+    const hydrants: Array<[number, number]> = [];
+    const hyX = PARCEL_W * 0.5 - 1.2;
+    const hyZ = PARCEL_D * 0.5 - 1.2;
+    for (let col = -1; col <= 1; col++) {
+      for (let row = -1; row <= 1; row++) {
+        const cx = col * CELL_X;
+        const cz = row * CELL_Z;
+        // Set a quarter-block off the middle of each edge, the way NYC hydrants
+        // sit near the corners — the mid-edge is where entrances, stoops and
+        // theatre marquees are, and a hydrant planted there reads as a mistake.
+        const offX = PARCEL_W * 0.25;
+        const offZ = PARCEL_D * 0.25;
+        hydrants.push([cx - hyX, cz - offZ]); // west kerb
+        hydrants.push([cx + hyX, cz + offZ]); // east kerb
+        hydrants.push([cx - offX, cz - hyZ]); // north kerb
+        hydrants.push([cx + offX, cz + hyZ]); // south kerb
+      }
+    }
     for (const [hx, hz] of hydrants) {
       const baseGeom = new THREE.CylinderGeometry(0.22, 0.24, 0.12, 8);
       const base = this.addMeshWithEdges(propsGroup, baseGeom, this.accentMat, InkShaderMaterial.defaultAccentColor, false);
-      base.position.set(hx, 0.56, hz);
+      base.position.set(hx, STREET_Y + 0.06, hz);
       const bodyGeom = new THREE.CylinderGeometry(0.16, 0.18, 0.55, 8);
       const body = this.addMeshWithEdges(propsGroup, bodyGeom, this.accentMat, InkShaderMaterial.defaultAccentColor, true);
-      body.position.set(hx, 0.9, hz);
+      body.position.set(hx, STREET_Y + 0.4, hz);
       const domeGeom = new THREE.SphereGeometry(0.16, 8, 6);
       const dome = this.addMeshWithEdges(propsGroup, domeGeom, this.accentMat, InkShaderMaterial.defaultAccentColor, false);
-      dome.position.set(hx, 1.18, hz);
+      dome.position.set(hx, STREET_Y + 0.68, hz);
       const nozzleGeom = new THREE.CylinderGeometry(0.07, 0.07, 0.22, 6);
-      for (const s of [-1, 1]) {
+      for (const sgn of [-1, 1]) {
         const nozzle = this.addMeshWithEdges(propsGroup, nozzleGeom, this.accentMat, InkShaderMaterial.defaultAccentColor, false);
         nozzle.rotation.z = Math.PI * 0.5;
-        nozzle.position.set(hx + s * 0.2, 0.95, hz);
+        nozzle.position.set(hx + sgn * 0.2, STREET_Y + 0.45, hz);
       }
       this.streetPropSpecs.push({ x: hx, z: hz, r: 0.28, h: 0.9 });
+      // Hydrant bonnet is a latch anchor: winch to one to yank yourself low and
+      // fast along the pavement. WebShooter allows anchors below the eyeline
+      // only from a distance, so this never pins you to the kerb at your feet.
+      const anchor = new THREE.Vector3(hx, STREET_Y + 0.78, hz);
+      this.webAnchors.push(anchor);
+      this.hydrantAnchors.push(anchor.clone());
     }
 
-    const cans: Array<[number, number]> = [
-      [29.2, 29.2], [-26.8, 29.2], [29.2, -26.8], [-26.8, -26.8],
-      [65.2, 1.2], [-62.8, 1.2], [1.2, 25.2], [1.2, -28.8],
-    ];
+    // Trash cans tucked beside the lamp corners
+    const cans: Array<[number, number]> = [];
+    for (let col = -1; col <= 1; col++) {
+      for (let row = -1; row <= 1; row++) {
+        cans.push([col * CELL_X + PARCEL_W * 0.5 - 3.4, row * CELL_Z + PARCEL_D * 0.5 - 3.4]);
+      }
+    }
     for (const [cx, cz] of cans) {
       const canGeom = new THREE.CylinderGeometry(0.3, 0.27, 0.8, 10);
       const can = this.addMeshWithEdges(propsGroup, canGeom, this.metalMat, InkShaderMaterial.defaultInkColor, true);
-      can.position.set(cx, 0.9, cz);
+      can.position.set(cx, STREET_Y + 0.4, cz);
       const lidGeom = new THREE.CylinderGeometry(0.33, 0.33, 0.08, 10);
       const lid = this.addMeshWithEdges(propsGroup, lidGeom, this.metalMat, InkShaderMaterial.defaultInkColor, false);
-      lid.position.set(cx, 1.34, cz);
+      lid.position.set(cx, STREET_Y + 0.84, cz);
       this.streetPropSpecs.push({ x: cx, z: cz, r: 0.35, h: 1.0 });
     }
     this.group.add(propsGroup);

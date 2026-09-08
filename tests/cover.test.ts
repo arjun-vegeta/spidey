@@ -267,7 +267,7 @@ describe('City-wide railing audit', () => {
   // One probe per railing family in the world, so a regression anywhere in the
   // city trips this rather than only the family that happened to get a test.
   const probes: Array<[string, number, number, number]> = [
-    ['skyscraper roof parapet ring', 0, 49.9, 15.0],
+    ['plaza tower roof parapet ring', 0, 38.1, 62.0],
     ['depot rooftop parapet (south)', 0, -40.2, 9.8],
     ['depot mezzanine balustrade (west)', -5.0, -50.0, 5.2],
     ['depot NE stair balustrade', 8.45, -54.0, 5.2],

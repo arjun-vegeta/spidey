@@ -199,8 +199,10 @@ describe('WebShooter - latching solid geometry that never registered a mesh', ()
   const anchors = cb.getWebAnchors();
   const coll = cb.getWorldCollider();
 
-  // Low rooftop with a clear line to the site crane's mast head
-  const EYE = new THREE.Vector3(0, 15.9, 42);
+  // Mid-air vantage on the road west of the site, with a clear line up to the
+  // crane's mast head (the district's buildings sit on the 3x3 parcel grid, so
+  // this street corridor stays open).
+  const EYE = new THREE.Vector3(-30, 20, -4);
   const CRANE_HEAD = new THREE.Vector3(2, 45.5, -2);
 
   function aimAtCraneHead(bindCollider: boolean) {

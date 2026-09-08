@@ -90,69 +90,90 @@ describe('City Collision Shells Integration [8 + 29] - six-building ink district
     expect(coll.groundAt(-45.5, 18.0, 0)).toBe(18.0);
   });
 
-  it('stands feet on the brick walkup roof terrace', () => {
-    expect(coll.groundAt(0, 15.0, 42.0)).toBe(15.0);
+  it('stands feet on the plaza tower roof', () => {
+    expect(coll.groundAt(0, 62.0, 50.0)).toBe(62.0);
   });
 
-  it('stands feet on the deco crown terrace ring and upper roof', () => {
-    // Terrace ring between lower (|x|<13) and upper (|x|<9.36) tiers at 56
-    expect(coll.groundAt(11, 56.0, 68.0)).toBe(56.0);
-    expect(coll.groundAt(0, 88.0, 68.0)).toBe(88.0);
-  });
-
-  it('blocks walking into the glass slab', () => {
-    // West face at x=42: a capsule nosing into the facade ejects to 41.4
+  it('walks clean through the plaza tower pilotis parking deck', () => {
+    // The one open ground floor in the district: bulk starts at the 5m podium,
+    // so a capsule crosses the whole footprint at street level.
     const out = { x: 0, z: 0, nx: 0, nz: 0, pushed: false };
-    coll.pushOut(42.3, 0, 0.6, 0, 2, out);
+    for (let z = 36; z <= 64; z += 2) {
+      out.pushed = false;
+      coll.pushOut(0.0, z, 0.35, 0.5, 2.3, out);
+      expect(out.pushed, `pilotis deck blocked at z=${z}`).toBe(false);
+    }
+    // But the podium above it is solid, and its underside is a ceiling
+    const above = { x: 0, z: 0, nx: 0, nz: 0, pushed: false };
+    coll.pushOut(0, 50, 0.35, 6.0, 7.8, above);
+    expect(above.pushed).toBe(true);
+    expect(coll.ceilingAt(-4.0, 1.0, 50.0)).toBe(5.0);
+  });
+
+  it('stands feet on the crown terrace ring, tiered balconies and upper roof', () => {
+    // Setback ring at 52 between lower (|dx|<13) and upper (|dx|<8.58) tiers
+    expect(coll.groundAt(65, 52.0, 0)).toBe(52.0);
+    // Tiered balconies hang off the upper tier at 64 and 76
+    expect(coll.groundAt(45, 76.0, 0)).toBe(76.0);
+    expect(coll.groundAt(0 + 54, 88.0, 0)).toBe(88.0);
+  });
+
+  it('blocks walking into the crown facade', () => {
+    // West face at x=41: a capsule nosing into it ejects to 40.4
+    const out = { x: 0, z: 0, nx: 0, nz: 0, pushed: false };
+    coll.pushOut(41.3, 0, 0.6, 0, 2, out);
     expect(out.pushed).toBe(true);
-    expect(out.x).toBeCloseTo(41.4, 5);
+    expect(out.x).toBeCloseTo(40.4, 5);
   });
 
-  it('stands feet on a ledge-tower perch ledge', () => {
-    // West-face perch at world x=55.7, first level y=10
-    expect(coll.groundAt(55.7, 10.0, 46.0)).toBe(10.0);
+  it('stands feet on a plaza tower perch ledge', () => {
+    // West-face perch on the pilotis tower: 24m wide, so the ledge sits at -12.7
+    expect(coll.groundAt(-12.7, 10.0, 50.0)).toBe(10.0);
   });
 
-  it('stands feet on the waterworks roof and the walkup tank deck', () => {
-    expect(coll.groundAt(-46, 13.0, -44.0)).toBe(13.0);
-    // Walkup tank deck ring top at 15 + 4.5 + 0.25 = 19.75
-    expect(coll.groundAt(4.2, 19.75, 44.8)).toBe(19.75);
+  it('stands feet on the warehouse roof and its tank deck', () => {
+    expect(coll.groundAt(-54, 16.0, -50.0)).toBe(16.0);
+    // Waterworks roof: twin tank decks stand above the roof slab
+    const deck = coll.groundAt(-47.0, 22.0, -47.0, 0.55);
+    expect(deck).not.toBeNull();
+    expect(deck!).toBeGreaterThan(16.0);
   });
 
   it('blocks the smokestack and lamp posts', () => {
     const stack = { x: 0, z: 0, nx: 0, nz: 0, pushed: false };
-    coll.pushOut(-55, -50, 0.6, 13, 15, stack);
+    coll.pushOut(-63, -56, 0.6, 18, 20, stack);
     expect(stack.pushed).toBe(true);
     const lamp = { x: 0, z: 0, nx: 0, nz: 0, pushed: false };
-    coll.pushOut(28.2, 28, 0.6, 0, 2, lamp);
+    coll.pushOut(16.0, 14.0, 0.6, 0.5, 2.3, lamp);
     expect(lamp.pushed).toBe(true);
   });
 
-  it('parapets read as rails: roof edge blocks, roof center stands', () => {    // Walkup roof center stands free
-    expect(coll.groundAt(0, 15.0, 42.0)).toBe(15.0);
-    // North parapet strip at z=50-0.175..50 blocks horizontal entry
+  it('parapets read as rails: roof edge blocks, roof center stands', () => {
+    // Plaza tower roof centre stands free
+    expect(coll.groundAt(0, 62.0, 50.0)).toBe(62.0);
+    // North parapet strip on its z = 38 edge blocks horizontal entry
     const out = { x: 0, z: 0, nx: 0, nz: 0, pushed: false };
-    coll.pushOut(0, 49.9, 0.6, 15.0, 16.8, out);
+    coll.pushOut(0, 38.1, 0.6, 62.0, 63.8, out);
     expect(out.pushed).toBe(true);
   });
 
-  it('stands on the copper terrace ring and blocks the mansard bulk', () => {
-    // Setback ring at 24 between lower (|x|<11) and upper (|x|<7.92) tiers
-    expect(coll.groundAt(57.5, 24.0, -48.0)).toBe(24.0);
-    // Copper east face at x=59 blocks
+  it('stands on the orchard row terrace ring and blocks the mansard bulk', () => {
+    // Setback ring at 24 between lower (|dx|<13) and upper (|dx|<10.14) tiers
+    expect(coll.groundAt(65.5, 24.0, 50.0)).toBe(24.0);
+    // Its east face at x=67 blocks
     const out = { x: 0, z: 0, nx: 0, nz: 0, pushed: false };
-    coll.pushOut(58.5, -48, 0.6, 0, 2, out);
+    coll.pushOut(66.5, 50, 0.6, 0, 2, out);
     expect(out.pushed).toBe(true);
   });
 
   it('walks under the theater marquee but not through the fly tower', () => {
     // Marquee floats at y 5: street-level passage beneath stays open
     const under = { x: 0, z: 0, nx: 0, nz: 0, pushed: false };
-    coll.pushOut(-31.4, 48, 0.6, 0.5, 2.3, under);
+    coll.pushOut(-37.4, 50, 0.6, 0.5, 2.3, under);
     expect(under.pushed).toBe(false);
     // Fly tower rear block is solid
     const tower = { x: 0, z: 0, nx: 0, nz: 0, pushed: false };
-    coll.pushOut(-54, 48, 0.6, 0, 2, tower);
+    coll.pushOut(-63, 50, 0.6, 0, 2, tower);
     expect(tower.pushed).toBe(true);
   });
 
