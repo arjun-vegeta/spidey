@@ -68,6 +68,12 @@ export class WebShooter {
   public worldCollider: WorldCollider | null = null;
   /** Matches the mesh raycaster's near plane: nothing latches in your face. */
   private readonly minLatchDist: number = 2.0;
+  /**
+   * How far away a curated anchor BELOW the eyeline has to be before it counts.
+   * Keeps street-level latches (hydrants) usable as winch targets without ever
+   * letting you web the ground you are standing on.
+   */
+  public static readonly MIN_LOW_ANCHOR_HORIZ: number = 6.0;
 
   constructor(physics: SwingPhysics) {
     this.physics = physics;
@@ -156,7 +162,14 @@ export class WebShooter {
         this.tmpTo.subVectors(a, origin);
         const dist = this.tmpTo.length();
         if (dist < 5 || dist > this.maxWebDistance) continue;
-        if (a.y < playerPos.y + 1.0) continue;
+        // Anchors above the eyeline always qualify. A LOW anchor — a hydrant
+        // bonnet, a lamp base — only qualifies from a distance: webbing
+        // something at your feet would just pin you to the pavement, but
+        // winching to a hydrant across the street is a real move.
+        if (a.y < playerPos.y + 1.0) {
+          const horiz = Math.hypot(a.x - origin.x, a.z - origin.z);
+          if (horiz < WebShooter.MIN_LOW_ANCHOR_HORIZ) continue;
+        }
         this.tmpTo.normalize();
         const angle = this.tmpBase.angleTo(this.tmpTo);
         if (angle > 0.38) continue;
